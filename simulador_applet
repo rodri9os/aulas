@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simulador de Fragmentação de Pacotes</title>
+<style>
+body {
+font-family: Arial, sans-serif;
+margin: 0;
+padding: 20px;
+background-color: #f5f5f5;
+}
+
+.container {
+max-width: 1000px;
+margin: 0 auto;
+background-color: white;
+padding: 20px;
+border-radius: 8px;
+box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.controls {
+display: flex;
+gap: 20px;
+margin-bottom: 20px;
+padding: 15px;
+background-color: #f0f0f0;
+border-radius: 5px;
+flex-wrap: wrap;
+}
+
+.control-group {
+display: flex;
+flex-direction: column;
+gap: 5px;
+}
+
+.speed-control {
+display: flex;
+align-items: center;
+gap: 10px;
+}
+
+.delay-control {
+display: flex;
+gap: 10px;
+align-items: center;
+}
+
+.buttons {
+display: flex;
+gap: 10px;
+margin-bottom: 20px;
+flex-wrap: wrap;
+}
+
+button {
+padding: 8px 16px;
+background-color: #4CAF50;
+color: white;
+border: none;
+border-radius: 4px;
+cursor: pointer;
+font-weight: bold;
+}
+
+button:hover {
+background-color: #45a049;
+}
+
+button:disabled {
+background-color: #cccccc;
+cursor: not-allowed;
+}
+
+.timer {
+text-align: center;
+font-size: 18px;
+font-weight: bold;
+color: white;
+background-color: #f06292;
+padding: 10px;
+margin-bottom: 20px;
+border-radius: 5px;
+}
+
+.network {
+position: relative;
+background-color: #ffcdd2;
+padding: 20px;
+border-radius: 5px;
+margin-bottom: 20px;
+min-height: 300px;
+overflow: hidden;
+}
+
+.nodes {
+display: flex;
+justify-content: space-between;
+margin-top: 150px;
+position: relative;
+padding: 0 30px;
+}
+
+.node {
+display: flex;
+flex-direction: column;
+align-items: center;
+width: 80px;
+text-align: center;
+z-index: 3;
+position: relative;
+}
+
+.node-name {
+font-weight: bold;
+margin-bottom: 5px;
+font-size: 16px;
+background-color: #3f51b5;
+color: white;
+padding: 3px 8px;
+border-radius: 4px;
+}
+
+.buffers {
+display: flex;
+flex-direction: column;
+gap: 5px;
+align-items: center;
+}
+
+.buffer {
+width: 60px;
+height: 100px;
+border: 2px solid black;
+background-color: white;
+position: relative;
+overflow: hidden;
+}
+
+.buffer-label {
+position: absolute;
+top: 0;
+left: 0;
+font-size: 12px;
+font-weight: bold;
+padding: 2px;
+background-color: rgba(255, 255, 255, 0.7);
+}
+
+.link {
+position: absolute;
+height: 8px;
+background-color: #90caf9;
+top: 150px;
+border-radius: 4px;
+z-index: 1;
+}
+
+#link1 {
+left: 14%;
+width: 18%;
+}
+
+#link2 {
+left: 41%;
+width: 18%;
+}
+
+#link3 {
+left: 68%;
+width: 18%;
+}
+
+.link-label {
+position: absolute;
+top: -20px;
+left: 50%;
+transform: translateX(-50%);
+font-weight: bold;
+background-color: white;
+padding: 2px 6px;
+border-radius: 4px;
+box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.packet {
+width: 56px;
+height: 10px;
+background-color: yellow;
+border: 1px solid black;
+position: absolute;
+bottom: 0;
+left: 2px;
+font-size: 8px;
+display: flex;
+align-items: center;
+justify-content: center;
+overflow: hidden;
+}
+
+.packet-in-transit {
+position: absolute;
+width: 20px;
+height: 10px;
+background-color: yellow;
+border: 1px solid black;
+z-index: 2;
+font-size: 8px;
+display: flex;
+align-items: center;
+justify-content: center;
+overflow: hidden;
+}
+
+.legend {
+margin-top: 20px;
+background-color: white;
+padding: 10px;
+border-radius: 5px;
+font-size: 14px;
+}
+
+.legend-item {
+display: flex;
+align-items: center;
+margin-bottom: 5px;
+}
+
+.legend-color {
+width: 20px;
+height: 10px;
+margin-right: 10px;
+border: 1px solid black;
+}
+
+.legend-text {
+flex: 1;
+}
+
+.info-panel {
+background-color: #e3f2fd;
+padding: 10px;
+border-radius: 5px;
+margin-bottom: 20px;
+}
+
+.stats-panel {
+background-color: #e8f5e9;
+padding: 10px;
+border-radius: 5px;
+margin-bottom: 20px;
+}
+
+/* Cores diferentes para pacotes de diferentes grupos */
+.packet-group-0 { background-color: #ffeb3b; }
+.packet-group-1 { background-color: #ffa726; }
+.packet-group-2 { background-color: #66bb6a; }
+.packet-group-3 { background-color: #29b6f6; }
+.packet-group-4 { background-color: #ab47bc; }
+.packet-group-5 { background-color: #ec407a; }
+.packet-group-6 { background-color: #5c6bc0; }
+.packet-group-7 { background-color: #26a69a; }
+.packet-group-8 { background-color: #d4e157; }
+.packet-group-9 { background-color: #8d6e63; }
+
+/* Estilo para fragmentos */
+.fragment {
+position: relative;
+}
+
+.fragment::before {
+content: '';
+position: absolute;
+top: 0;
+right: 0;
+width: 5px;
+height: 5px;
+background-color: red;
+border-radius: 50%;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Simulador de Fragmentação de Pacotes</h1>
+
+<div class="info-panel">
+<h3>Informações sobre o Simulador</h3>
+<p>Este simulador demonstra o processo de fragmentação de pacotes em uma rede. Cada retângulo colorido representa 1 kB de dados.</p>
+<p><strong>Conceito importante:</strong> Quando o tamanho da mensagem não é divisível pelo tamanho máximo do pacote, ocorre fragmentação. Cada fragmento gasta o mesmo tempo de transmissão que um pacote completo, independente do seu tamanho.</p>
+<p>Os pacotes da mesma mensagem têm a mesma cor para facilitar a visualização.</p>
+</div>
+
+<div class="stats-panel">
+<h3>Estatísticas da Simulação</h3>
+<div id="packetStats">
+<p>Tamanho da mensagem: <span id="statMessageSize">0</span> kB</p>
+<p>Tamanho máximo de pacote: <span id="statPacketSize">0</span> kB</p>
+<p>Número de pacotes: <span id="statNumPackets">0</span></p>
+<p>Número de fragmentos: <span id="statFragments">0</span></p>
+<p>Bytes de overhead: <span id="statOverhead">0</span> kB</p>
+<p>Eficiência: <span id="statEfficiency">0</span>%</p>
+</div>
+</div>
+
+<div class="controls">
+<div class="control-group">
+<label for="messageSize">Tamanho da Mensagem (kB):</label>
+<input type="number" id="messageSize" min="1" max="100" value="10">
+</div>
+
+```
+<div class="control-group">
+  <label for="packetSize">Tamanho Máximo do Pacote (kB):</label>
+  <input type="number" id="packetSize" min="1" max="10" value="4">
+</div>
+
+<div class="delay-control">
+  <span>Atraso de Propagação:</span>
+  <div>
+    <input type="checkbox" id="delay1"> <label for="delay1">L1</label>
+    <input type="checkbox" id="delay2"> <label for="delay2">L2</label>
+    <input type="checkbox" id="delay3"> <label for="delay3">L3</label>
+  </div>
+</div>
+
+<div class="speed-control">
+  <span>Velocidade:</span>
+  <div>
+    <input type="radio" id="speedSlow" name="speed" value="slow" checked>
+    <label for="speedSlow">Lenta</label>
+    <input type="radio" id="speedNormal" name="speed" value="normal">
+    <label for="speedNormal">Normal</label>
+    <input type="radio" id="speedFast" name="speed" value="fast">
+    <label for="speedFast">Rápida</label>
+  </div>
+</div>
+
+```
+
+</div>
+
+<div class="buttons">
+<button id="startBtn">Iniciar</button>
+<button id="pauseBtn" disabled>Pausar</button>
+<button id="resumeBtn" disabled>Retomar</button>
+<button id="stopBtn" disabled>Parar</button>
+</div>
+
+<div class="timer">TEMPO DECORRIDO: 0.00</div>
+
+<div class="network">
+<div class="links">
+<div class="link" id="link1">
+<div class="link-label">L1</div>
+</div>
+<div class="link" id="link2">
+<div class="link-label">L2</div>
+</div>
+<div class="link" id="link3">
+<div class="link-label">L3</div>
+</div>
+</div>
+
+```
+<div class="nodes">
+  <div class="node">
+    <div class="node-name">Fonte</div>
+    <div class="buffers">
+      <!-- Removido o buffer R da fonte -->
+      <div class="buffer" id="sourceB">
+        <div class="buffer-label">B</div>
+      </div>
+      <div class="buffer" id="sourceT">
+        <div class="buffer-label">T</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">B</div>
+    <div class="buffers">
+      <div class="buffer" id="nodeB_R">
+        <div class="buffer-label">R</div>
+      </div>
+      <div class="buffer" id="nodeB_B">
+        <div class="buffer-label">B</div>
+      </div>
+      <div class="buffer" id="nodeB_T">
+        <div class="buffer-label">T</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">C</div>
+    <div class="buffers">
+      <div class="buffer" id="nodeC_R">
+        <div class="buffer-label">R</div>
+      </div>
+      <div class="buffer" id="nodeC_B">
+        <div class="buffer-label">B</div>
+      </div>
+      <div class="buffer" id="nodeC_T">
+        <div class="buffer-label">T</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="node">
+    <div class="node-name">Destino</div>
+    <div class="buffers">
+      <div class="buffer" id="destR">
+        <div class="buffer-label">R</div>
+      </div>
+      <div class="buffer" id="destB">
+        <div class="buffer-label">B</div>
+      </div>
+      <!-- Removido o buffer T do destino -->
+    </div>
+  </div>
+</div>
+
+```
+
+</div>
+
+<div class="legend">
+<h3>Legenda</h3>
+<div class="legend-item">
+<div class="legend-color" style="background-color: yellow;"></div>
+<div class="legend-text">Cada retângulo representa 1 kB de dados. Cores diferentes indicam pacotes diferentes.</div>
+</div>
+<div class="legend-item">
+<div class="legend-color fragment" style="background-color: yellow;"></div>
+<div class="legend-text">Pacotes com ponto vermelho são fragmentos (últimos fragmentos quando o pacote não é divisível).</div>
+</div>
+<div class="legend-item">
+<div style="font-weight: bold; margin-right: 10px;">R:</div>
+<div class="legend-text">Buffer de recepção</div>
+</div>
+<div class="legend-item">
+<div style="font-weight: bold; margin-right: 10px;">B:</div>
+<div class="legend-text">Buffer interno</div>
+</div>
+<div class="legend-item">
+<div style="font-weight: bold; margin-right: 10px;">T:</div>
+<div class="legend-text">Buffer de transmissão</div>
+</div>
+</div>
+
+</div>
+
+<script>
+// Variáveis globais
+let timer;
+let elapsedTime = 0;
+let isRunning = false;
+let packets = [];
+let packetsInTransit = [];
+let animationSpeed = 1000; // Velocidade em ms (padrão: lento)
+let delays = {
+L1: false,
+L2: false,
+L3: false
+};
+let messageStats = {
+messageSize: 0,
+packetSize: 0,
+numPackets: 0,
+fragments: 0,
+overhead: 0,
+efficiency: 0
+};
+
+// Captura elementos do DOM
+const startBtn = document.getElementById('startBtn');
+const pauseBtn = document.getElementById('pauseBtn');
+const resumeBtn = document.getElementById('resumeBtn');
+const stopBtn = document.getElementById('stopBtn');
+const timerElement = document.querySelector('.timer');
+
+// Event listeners para botões
+startBtn.addEventListener('click', startSimulation);
+pauseBtn.addEventListener('click', pauseSimulation);
+resumeBtn.addEventListener('click', resumeSimulation);
+stopBtn.addEventListener('click', stopSimulation);
+
+// Event listeners para controle de velocidade
+document.getElementById('speedSlow').addEventListener('change', updateSpeed);
+document.getElementById('speedNormal').addEventListener('change', updateSpeed);
+document.getElementById('speedFast').addEventListener('change', updateSpeed);
+
+// Event listeners para delays
+document.getElementById('delay1').addEventListener('change', updateDelays);
+document.getElementById('delay2').addEventListener('change', updateDelays);
+document.getElementById('delay3').addEventListener('change', updateDelays);
+
+// Atualiza velocidade baseada na seleção do usuário
+function updateSpeed() {
+if (document.getElementById('speedSlow').checked) {
+animationSpeed = 1000;
+} else if (document.getElementById('speedNormal').checked) {
+animationSpeed = 500;
+} else if (document.getElementById('speedFast').checked) {
+animationSpeed = 200;
+}
+}
+
+// Atualiza configurações de delay
+function updateDelays() {
+delays.L1 = document.getElementById('delay1').checked;
+delays.L2 = document.getElementById('delay2').checked;
+delays.L3 = document.getElementById('delay3').checked;
+}
+
+// Calcula e atualiza estatísticas
+function updateStats(messageSize, packetSize) {
+const numPackets = Math.ceil(messageSize / packetSize);
+const lastPacketSize = messageSize % packetSize || packetSize;
+const fragments = lastPacketSize < packetSize ? 1 : 0;
+const overhead = (numPackets * 20) / 1024; // 20 bytes de overhead por pacote, convertido para kB
+const efficiency = ((messageSize) / (messageSize + (numPackets * 20) / 1024)) * 100;
+
+messageStats = {
+messageSize,
+packetSize,
+numPackets,
+fragments,
+overhead,
+efficiency
+};
+
+// Atualiza os elementos HTML
+document.getElementById('statMessageSize').textContent = messageSize;
+document.getElementById('statPacketSize').textContent = packetSize;
+document.getElementById('statNumPackets').textContent = numPackets;
+document.getElementById('statFragments').textContent = fragments;
+document.getElementById('statOverhead').textContent = overhead.toFixed(2);
+document.getElementById('statEfficiency').textContent = efficiency.toFixed(2);
+}
+
+// Inicia a simulação
+function startSimulation() {
+// Reset de qualquer simulação anterior
+resetSimulation();
+
+// Captura valores dos inputs
+const messageSize = parseInt(document.getElementById('messageSize').value);
+const packetSize = parseInt(document.getElementById('packetSize').value);
+
+// Validação dos inputs
+if (messageSize <= 0 || packetSize <= 0) {
+alert("Por favor, insira valores válidos para o tamanho da mensagem e do pacote.");
+return;
+}
+
+// Atualiza estatísticas
+updateStats(messageSize, packetSize);
+
+// Calcula número de pacotes necessários
+const numPackets = Math.ceil(messageSize / packetSize);
+
+let remainingBytes = messageSize;
+
+// Cria os pacotes na fonte (buffer B)
+for (let i = 0; i < numPackets; i++) {
+// Calcula o tamanho real deste pacote (para fragmentação)
+const thisPacketSize = Math.min(packetSize, remainingBytes);
+remainingBytes -= thisPacketSize;
+
+```
+// Flag para marcar se este é um fragmento (pacote menor que tamanho máximo)
+const isFragment = thisPacketSize < packetSize && i === numPackets - 1;
+
+// Cria um pacote para cada 1kB de dados
+for (let j = 0; j < thisPacketSize; j++) {
+  const packet = document.createElement('div');
+  packet.className = `packet packet-group-${i % 10}`; // Usa cores diferentes para pacotes diferentes
+
+  if (isFragment) {
+    packet.classList.add('fragment'); // Adiciona classe para estilizar fragmentos
+  }
+
+  packet.style.bottom = `${(i * packetSize + j) * 12}px`;
+  packet.dataset.id = `${i}-${j}`;
+  packet.dataset.packetGroup = i;  // Identifica a qual grupo de pacotes pertence
+  packet.dataset.size = 1;         // Cada pacote representa 1kB
+  packet.dataset.location = 'sourceB';
+  packet.dataset.status = 'waiting';
+  packet.textContent = `P${i+1}-${j+1}`;  // Identifica o fragmento
+
+  // Todos os pacotes têm altura fixa de 10px (1kB)
+  packet.style.height = '10px';
+
+  document.getElementById('sourceB').appendChild(packet);
+  packets.push(packet);
+}
+
+```
+
+}
+
+// Atualiza estados dos botões
+startBtn.disabled = true;
+pauseBtn.disabled = false;
+stopBtn.disabled = false;
+resumeBtn.disabled = true;
+
+// Inicia o timer
+isRunning = true;
+startTimer();
+
+// Inicia a animação da simulação
+setTimeout(moveNextPacket, 1000);
+}
+
+// Pausa a simulação
+function pauseSimulation() {
+isRunning = false;
+clearInterval(timer);
+pauseBtn.disabled = true;
+resumeBtn.disabled = false;
+}
+
+// Retoma a simulação
+function resumeSimulation() {
+isRunning = true;
+startTimer();
+resumeBtn.disabled = true;
+pauseBtn.disabled = false;
+setTimeout(moveNextPacket, animationSpeed);
+}
+
+// Para a simulação
+function stopSimulation() {
+isRunning = false;
+clearInterval(timer);
+
+// Limpa todos os pacotes
+resetSimulation();
+
+// Reset do timer
+elapsedTime = 0;
+updateTimerDisplay();
+
+// Atualiza estados dos botões
+startBtn.disabled = false;
+pauseBtn.disabled = true;
+resumeBtn.disabled = true;
+stopBtn.disabled = true;
+}
+
+// Reinicia a simulação
+function resetSimulation() {
+// Remove todos os pacotes
+packets.forEach(packet => {
+if (packet.parentNode) {
+packet.parentNode.removeChild(packet);
+}
+});
+
+// Remove pacotes em trânsito
+packetsInTransit.forEach(packet => {
+if (packet.parentNode) {
+packet.parentNode.removeChild(packet);
+}
+});
+
+packets = [];
+packetsInTransit = [];
+
+// Limpa qualquer timer em execução
+clearInterval(timer);
+}
+
+// Inicia o timer
+function startTimer() {
+timer = setInterval(() => {
+elapsedTime += 0.01;
+updateTimerDisplay();
+}, 10);
+}
+
+// Atualiza o display do timer
+function updateTimerDisplay() {
+timerElement.textContent = `TEMPO DECORRIDO: ${elapsedTime.toFixed(2)}`;
+}
+
+// Move o próximo pacote disponível
+function moveNextPacket() {
+if (!isRunning) return;
+
+// Tenta mover pacotes em diferentes estágios, seguindo o fluxo de processamento
+movePacketFromNode('nodeC_T', 'destR', 'L3', 3);
+movePacketFromNode('nodeB_T', 'nodeC_R', 'L2', 2);
+movePacketFromNode('sourceT', 'nodeB_R', 'L1', 1);
+
+// Move pacotes entre buffers dentro dos nós
+// Destino: R -> B (sem buffer T no destino)
+moveInternalPackets('destR', 'destB');
+
+// Nó C: R -> B -> T
+moveInternalPackets('nodeC_R', 'nodeC_B');
+moveInternalPackets('nodeC_B', 'nodeC_T');
+
+// Nó B: R -> B -> T
+moveInternalPackets('nodeB_R', 'nodeB_B');
+moveInternalPackets('nodeB_B', 'nodeB_T');
+
+// Fonte: B -> T (sem buffer R na fonte)
+moveInternalPackets('sourceB', 'sourceT');
+
+// Agenda o próximo movimento
+setTimeout(moveNextPacket, animationSpeed);
+}
+
+// Move pacotes entre buffers dentro do mesmo nó
+function moveInternalPackets(sourceId, targetId) {
+const sourceBuffer = document.getElementById(sourceId);
+const targetBuffer = document.getElementById(targetId);
+
+if (!sourceBuffer || !targetBuffer) return;
+
+// Procura um pacote no buffer de origem
+const packet = sourceBuffer.querySelector('.packet[data-status="waiting"]');
+
+if (packet) {
+// Verifica se há espaço no buffer de destino
+const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
+
+```
+if (packetsInTarget < 3) {  // Limite de 3 pacotes por buffer
+  // Atualiza localização do pacote
+  packet.dataset.location = targetId;
+
+  // Move o pacote para o novo buffer
+  targetBuffer.appendChild(packet);
+
+  // Reorganiza os pacotes no novo buffer
+  reorganizePacketsInBuffer(targetId);
+}
+
+```
+
+}
+}
+
+// Move pacotes entre nós através dos links
+function movePacketFromNode(sourceId, targetId, linkId, linkNumber) {
+const sourceBuffer = document.getElementById(sourceId);
+const targetBuffer = document.getElementById(targetId);
+const link = document.getElementById(`link${linkNumber}`);
+
+if (!sourceBuffer || !targetBuffer || !link) return;
+
+// Procura um pacote no buffer de origem
+const packet = sourceBuffer.querySelector('.packet[data-status="waiting"]');
+
+if (packet && !isPacketInTransitOnLink(linkId)) {
+// Cria pacote em trânsito
+const transitPacket = document.createElement('div');
+transitPacket.className = `packet-in-transit ${packet.classList.contains('fragment') ? 'fragment' : ''}`;
+transitPacket.classList.add(...Array.from(packet.classList).filter(c => c.startsWith('packet-group')));
+[transitPacket.dataset.id](http://transitpacket.dataset.id/) = [packet.dataset.id](http://packet.dataset.id/);
+transitPacket.dataset.packetGroup = packet.dataset.packetGroup;
+transitPacket.dataset.link = linkId;
+transitPacket.dataset.target = targetId;
+transitPacket.dataset.sourcePacket = [packet.dataset.id](http://packet.dataset.id/);
+transitPacket.textContent = packet.textContent;
+
+```
+// Posiciona o pacote no início do link
+const linkRect = link.getBoundingClientRect();
+const networkRect = document.querySelector('.network').getBoundingClientRect();
+
+transitPacket.style.left = `${linkRect.left - networkRect.left}px`;
+transitPacket.style.top = `${linkRect.top - networkRect.top - 1}px`;
+
+// Adiciona o pacote em trânsito à rede
+document.querySelector('.network').appendChild(transitPacket);
+packetsInTransit.push(transitPacket);
+
+// Remove o pacote do buffer de origem
+packet.dataset.status = 'in-transit';
+if (packet.parentNode) {
+  packet.parentNode.removeChild(packet);
+}
+
+// Calcula o tempo de trânsito (com ou sem delay)
+let transitTime = animationSpeed;
+if (delays[linkId]) {
+  transitTime = animationSpeed * 2;  // Tempo duplicado com delay
+}
+
+// Anima o movimento do pacote pelo link
+animatePacketOnLink(transitPacket, link, targetBuffer, transitTime, packet);
+
+```
+
+}
+}
+
+// Verifica se já existe um pacote em trânsito em um determinado link
+function isPacketInTransitOnLink(linkId) {
+return packetsInTransit.some(packet => packet.dataset.link === linkId);
+}
+
+// Anima o movimento de um pacote pelo link
+function animatePacketOnLink(transitPacket, link, targetBuffer, transitTime, originalPacket) {
+const linkRect = link.getBoundingClientRect();
+const networkRect = document.querySelector('.network').getBoundingClientRect();
+
+// Posição final do pacote (fim do link)
+const endX = linkRect.right - networkRect.left - transitPacket.offsetWidth;
+
+const startTime = Date.now();
+const startX = parseInt(transitPacket.style.left);
+const distance = endX - startX;
+
+function step() {
+const elapsed = Date.now() - startTime;
+const progress = Math.min(elapsed / transitTime, 1);
+
+```
+// Calcula nova posição
+const currentX = startX + (distance * progress);
+transitPacket.style.left = `${currentX}px`;
+
+if (progress < 1) {
+  // Continua a animação
+  requestAnimationFrame(step);
+} else {
+  // Remove o pacote em trânsito
+  if (transitPacket.parentNode) {
+    transitPacket.parentNode.removeChild(transitPacket);
+  }
+
+  packetsInTransit = packetsInTransit.filter(p => p !== transitPacket);
+
+  // Cria um novo pacote no buffer de destino
+  const newPacket = document.createElement('div');
+  newPacket.className = transitPacket.className.replace('packet-in-transit', 'packet');
+  newPacket.dataset.id = originalPacket.dataset.id;
+  newPacket.dataset.packetGroup = originalPacket.dataset.packetGroup;
+  newPacket.dataset.size = originalPacket.dataset.size;
+  newPacket.dataset.location = targetBuffer.id;
+  newPacket.dataset.status = 'waiting';
+  newPacket.style.height = originalPacket.style.height;
+  newPacket.textContent = originalPacket.textContent;
+
+  // Adiciona o novo pacote ao buffer de destino
+  targetBuffer.appendChild(newPacket);
+  packets.push(newPacket);
+
+  // Reorganiza os pacotes no buffer de destino
+  reorganizePacketsInBuffer(targetBuffer.id);
+
+  // Verifica se todos os pacotes chegaram ao destino
+  checkSimulationEnd();
+}
+
+```
+
+}
+
+// Inicia a animação
+requestAnimationFrame(step);
+}
+
+// Reorganiza os pacotes em um buffer para visualização adequada
+function reorganizePacketsInBuffer(bufferId) {
+const buffer = document.getElementById(bufferId);
+if (!buffer) return;
+
+const packetsInBuffer = Array.from(buffer.queryS
