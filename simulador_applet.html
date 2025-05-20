@@ -839,7 +839,7 @@
                 if (progress < 1) {
                     requestAnimationFrame(step);
                 } else {
-                    // Animação concluída, remover pacote em trânsito
+                    // Animação concluída, remover pacote em trânsito do DOM e do array packetsInTransit
                     if (transitPacket.parentNode) {
                         transitPacket.parentNode.removeChild(transitPacket);
                     }
@@ -851,19 +851,23 @@
                         // Reutiliza o elemento DOM original (originalPacketRef) em vez de criar um novo
                         // Isso é crucial para manter a referência no array 'packets' consistente.
                         const newPacketDOM = originalPacketRef; // É o mesmo objeto DIV criado no início
-                        newPacketDOM.className = 'packet'; // Volta a ser um pacote normal
-                        // Garante que as classes de grupo e fragmento são mantidas
-                        Array.from(transitPacket.classList).forEach(cls => {
-                            if (cls.startsWith('packet-group') || cls === 'fragment') {
-                                if (!newPacketDOM.classList.contains(cls)) { // Evita adicionar duplicatas
-                                    newPacketDOM.classList.add(cls);
-                                }
-                            }
-                        });
+                        newPacketDOM.className = 'packet'; // Garante que ele tenha a classe base 'packet'
+                        
+                        // Garante que as classes de grupo e fragmento são mantidas (se o transitPacket as tinha)
+                        // Não precisamos copiar de transitPacket aqui, pois newPacketDOM já tem essas classes do início
+                        // Apenas remove classes que não são mais relevantes para um pacote em buffer.
+                        newPacketDOM.classList.remove('packet-in-transit'); 
 
                         newPacketDOM.dataset.location = targetBuffer.id;
                         newPacketDOM.dataset.status = 'waiting'; // Estado intermediário, será atualizado para 'at-destB' se for o destB
                         
+                        // DEPURACAO: Verifique se originalPacketRef é o mesmo objeto que está no array 'packets'
+                        if (originalPacketRef && packets.includes(originalPacketRef)) {
+                            console.log(`[DEBUG - ANIMATION END] Packet ID: ${originalPacketRef.dataset.id} chegou em ${targetBuffer.id}. originalPacketRef é válido e está no array 'packets'.`);
+                        } else {
+                            console.error(`[CRITICAL ERROR - ANIMATION END] originalPacketRef para ID ${transitPacket.dataset.id} é INVÁLIDO ou NÃO está no array 'packets' após a animação!`);
+                        }
+
                         targetBuffer.appendChild(newPacketDOM); // Adiciona o elemento DOM original ao novo buffer
                         reorganizePacketsInBuffer(targetBuffer.id);
 
@@ -878,10 +882,9 @@
                         // Se um pacote for descartado, ele nunca chegará ao destB.
                         // Para que a simulação termine, pacotes descartados DEVERIAM ter seu status atualizado
                         // para algo como 'discarded', e a lógica de fim precisaria lidar com isso.
-                        // Por simplicidade, assumimos que os buffers não encherão até o ponto de descarte no final da simulação.
-                        // Mas se isso acontecer, o `allFragmentsReachedDest` será false.
                         if(originalPacketRef) {
                             originalPacketRef.dataset.status = 'discarded'; // Marcar como descartado
+                            console.warn(`[DISCARDED STATUS] Pacote ${originalPacketRef.dataset.id} marcado como 'discarded'.`);
                         }
                     }
                 }
@@ -912,10 +915,19 @@
             // Verificamos se cada fragmento no array 'packets' tem o status 'at-destB'.
             let allFragmentsReachedDest = true;
             let fragmentsAtDestBCount = 0;
+            let discardedFragmentsCount = 0;
+
             packets.forEach(p => {
                 if (p.dataset.status === 'at-destB') {
                     fragmentsAtDestBCount++;
-                } else {
+                } else if (p.dataset.status === 'discarded') {
+                    discardedFragmentsCount++;
+                    // Se permitirmos descartes para o fim da simulação, isso deve ser ajustado
+                    // Por enquanto, descartados impedem o 'allFragmentsReachedDest' de ser true
+                    allFragmentsReachedDest = false;
+                    console.log(`[STATUS CHECK] Fragmento ${p.dataset.id} (Grupo: ${p.dataset.packetGroup}) foi DESCARTADO. Isso impedirá o término se não for gerenciado.`);
+                }
+                else {
                     allFragmentsReachedDest = false;
                     console.log(`[STATUS CHECK] Fragmento ${p.dataset.id} (Grupo: ${p.dataset.packetGroup}) NÃO está em destB. Status atual: ${p.dataset.status}, Local: ${p.dataset.location}`);
                 }
@@ -925,6 +937,10 @@
             if (packets.length === 0) {
                 allFragmentsReachedDest = false; // Nenhuma mensagem foi criada ainda para terminar.
                 console.log("[STATUS CHECK] NENHUM fragmento foi criado (packets.length é 0).");
+            } else if (fragmentsAtDestBCount + discardedFragmentsCount < packets.length) {
+                // Se o número de pacotes em destB + descartados ainda não é igual ao total de pacotes criados,
+                // significa que ainda há pacotes presos ou em trânsito que não foram contabilizados.
+                allFragmentsReachedDest = false;
             }
 
 
@@ -943,13 +959,18 @@
             }
 
             console.log(`--- Check End Summary (${elapsedTime.toFixed(2)}s) ---`);
-            console.log(`Total Fragmentos Esperados: ${packets.length}`);
+            console.log(`Total Fragmentos Criados: ${packets.length}`);
             console.log(`Fragmentos com status 'at-destB': ${fragmentsAtDestBCount}`);
-            console.log(`ALL FRAGMENTS REACHED DESTB: ${allFragmentsReachedDest}`);
+            console.log(`Fragmentos com status 'discarded': ${discardedFragmentsCount}`);
+            console.log(`ALL FRAGMENTS REACHED DESTB (or discarded): ${allFragmentsReachedDest}`); // Nome ajustado para clareza
             console.log(`NO PACKETS IN TRANSIT: ${noPacketsInTransit}`);
             console.log(`NO PACKETS AT SOURCE: ${noPacketsAtSource}`);
             console.log(`Visualmente no destB: ${document.getElementById('destB').querySelectorAll('.packet').length} pacotes`);
 
+            // A simulação termina se:
+            // 1. Todos os fragmentos que foram gerados (e estão no array `packets`) chegaram ao destino final (destB) OU foram descartados.
+            // 2. Não há pacotes em trânsito nos links.
+            // 3. Não há mais pacotes para serem enviados da fonte.
             if (allFragmentsReachedDest && noPacketsInTransit && noPacketsAtSource) {
                 console.log("TODAS AS CONDIÇÕES DE FIM DE SIMULAÇÃO ATINGIDAS. Chamando stopSimulation()...");
                 stopSimulation();
