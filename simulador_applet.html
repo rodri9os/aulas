@@ -693,8 +693,6 @@
         function moveNextPacket() {
             if (!isRunning) return; // Se a simulação não estiver rodando, não faça nada
 
-            // console.log("Tick: Movendo pacotes...");
-
             // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
             movePacketFromNode('nodeC_T', 'destR', 'link3');
             movePacketFromNode('nodeB_T', 'nodeC_R', 'link2');
@@ -858,8 +856,6 @@
                     } else {
                         console.warn(`Buffer ${targetBuffer.id} cheio! Pacote ${transitPacket.dataset.id} descartado.`);
                     }
-
-                    // NÂO CHAME checkSimulationEnd() AQUI. Ele será chamado pelo setInterval principal com delay.
                 }
             }
             requestAnimationFrame(step);
@@ -877,46 +873,66 @@
             });
         }
 
-        // Verifica se a simulação terminou
+        // Função principal de verificação de término da simulação
         function checkSimulationEnd() {
-            // Se a simulação já não está rodando (parada manual ou automática), não faça nada
             if (!isRunning) {
                 return;
             }
 
             const messageSize = parseInt(document.getElementById('messageSize').value);
-            const totalExpectedFragments = messageSize; // Cada 1kB é um fragmento visualmente
+            const totalExpectedFragments = messageSize; // Total de fragmentos que devem chegar ao destino final
 
             const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
 
             // Condição 1: Todos os fragmentos esperados chegaram ao destino final (destB)
-            // totalExpectedFragments > 0 é para garantir que a simulação tenha algo para processar.
             const allFragmentsReachedDest = (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0);
 
             // Condição 2: Não há pacotes mais em trânsito (nos links)
             const noPacketsInTransit = packetsInTransit.length === 0;
 
-            // Condição 3: Não há pacotes em NENHUM buffer intermediário, nem na fonte.
-            // Verifica todos os buffers, exceto o destino final (destB).
-            const allIntermediateBuffersEmpty =
+            // Condição 3: Não há pacotes esperando na fonte (buffers sourceB e sourceT)
+            const noPacketsAtSource =
                 document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('sourceT').querySelectorAll('.packet').length === 0 &&
+                document.getElementById('sourceT').querySelectorAll('.packet').length === 0;
+
+            // Condição 4: Não há pacotes presos nos buffers de recepção intermediários (R de B, R de C e R do Destino)
+            // Pacotes aqui deveriam ter sido movidos para os buffers internos (B ou T) ou para o destB.
+            const noPacketsInReceptionBuffers =
                 document.getElementById('nodeB_R').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeB_B').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeB_T').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeC_R').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('destR').querySelectorAll('.packet').length === 0; // O buffer de recepção do destino também deve estar vazio
+                document.getElementById('destR').querySelectorAll('.packet').length === 0;
+
+            // Condição 5: Não há pacotes presos nos buffers internos (B de B e B de C)
+            const noPacketsInInternalBuffers =
+                document.getElementById('nodeB_B').querySelectorAll('.packet').length === 0 &&
+                document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0;
+
+            // Condição 6: Não há pacotes presos nos buffers de transmissão intermediários (T de B e T de C)
+            const noPacketsInTransmissionBuffers =
+                document.getElementById('nodeB_T').querySelectorAll('.packet').length === 0 &&
+                document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0;
 
 
-            console.log(`Check End: isRunning=${isRunning}, DestB=${packetsAtDestB}/${totalExpectedFragments}, InTransit=${noPacketsInTransit}, IntermediateEmpty=${allIntermediateBuffersEmpty}`);
+            console.log(`--- Check End ---`);
+            console.log(`Total Esperado: ${totalExpectedFragments}, Em DestB: ${packetsAtDestB}`);
+            console.log(`All Fragments Reached Dest: ${allFragmentsReachedDest}`);
+            console.log(`No Packets In Transit: ${noPacketsInTransit}`);
+            console.log(`No Packets At Source: ${noPacketsAtSource}`);
+            console.log(`No Packets In Reception Buffers: ${noPacketsInReceptionBuffers}`);
+            console.log(`No Packets In Internal Buffers: ${noPacketsInInternalBuffers}`);
+            console.log(`No Packets In Transmission Buffers: ${noPacketsInTransmissionBuffers}`);
 
 
-            // Se todas as condições forem verdadeiras, a simulação terminou
-            if (allFragmentsReachedDest && noPacketsInTransit && allIntermediateBuffersEmpty) {
+            // A simulação termina se:
+            // 1. Todos os fragmentos criados chegaram ao destino final (destB).
+            // 2. Não há pacotes em trânsito.
+            // 3. Não há mais pacotes esperando para serem transmitidos da fonte.
+            // 4. Não há pacotes "presos" em qualquer buffer intermediário (R, B, T).
+            // Isso garante que tudo foi processado e chegou ao fim.
+            if (allFragmentsReachedDest && noPacketsInTransit && noPacketsAtSource &&
+                noPacketsInReceptionBuffers && noPacketsInInternalBuffers && noPacketsInTransmissionBuffers) {
                 console.log("TODAS AS CONDIÇÕES DE FIM DE SIMULAÇÃO ATINGIDAS. Chamando stopSimulation()...");
-                stopSimulation(); // Chama stopSimulation para parar o timer e tudo mais
+                stopSimulation();
             }
         }
     </script>
