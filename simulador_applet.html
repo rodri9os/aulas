@@ -585,34 +585,44 @@
 
             // Inicia a animação da simulação
             simulationInterval = setInterval(moveNextPacket, animationSpeed);
+            console.log("Simulação iniciada. Timer ID:", timer, "Simulation Interval ID:", simulationInterval);
         }
 
         // Pausa a simulação
         function pauseSimulation() {
+            console.log("Pausando simulação...");
             isRunning = false;
             clearInterval(timer); // Para o timer
             clearInterval(simulationInterval); // Para o loop principal de movimento
             pauseBtn.disabled = true;
             resumeBtn.disabled = false;
+            console.log("Simulação pausada. Timer parado.");
         }
 
         // Retoma a simulação
         function resumeSimulation() {
+            console.log("Retomando simulação...");
             isRunning = true;
             startTimer(); // Reinicia o timer
             updateSpeed(); // Isso recria o simulationInterval com a velocidade atual
             resumeBtn.disabled = true;
             pauseBtn.disabled = false;
+            console.log("Simulação retomada.");
         }
 
-        // Para a simulação
+        // Para a simulação COMPLETAMENTE (manual ou automática)
         function stopSimulation() {
-            isRunning = false;
+            if (!isRunning) { // Evita parar algo que já está parado
+                console.log("stopSimulation chamada, mas já não está rodando.");
+                return;
+            }
+            console.log("Parando simulação automaticamente...");
+            isRunning = false; // Define a flag para falso IMEDIATAMENTE
             clearInterval(timer); // Garante que o timer seja parado
             clearInterval(simulationInterval); // Garante que o loop principal seja parado
 
             // Limpa todos os pacotes e elementos de trânsito
-            resetSimulation();
+            resetSimulation(); // resetSimulation já faz as limpezas visuais e de arrays
 
             // Reset do timer
             elapsedTime = 0;
@@ -623,13 +633,15 @@
             pauseBtn.disabled = true;
             resumeBtn.disabled = true;
             stopBtn.disabled = true;
+            console.log("Simulação COMPLETAMENTE parada. Timer zerado.");
+            alert(`Simulação Concluída! Todos os pacotes chegaram ao destino em ${elapsedTime.toFixed(2)} segundos.`);
         }
 
-        // Reinicia a simulação
+        // Reinicia a simulação (limpa tudo para um novo início)
         function resetSimulation() {
+            console.log("Reiniciando simulação...");
             // Remove todos os pacotes dos buffers
             document.querySelectorAll('.buffer').forEach(buffer => {
-                // Remove todos os elementos filhos que são pacotes
                 Array.from(buffer.children).forEach(child => {
                     if (child.classList.contains('packet')) {
                         buffer.removeChild(child);
@@ -637,7 +649,7 @@
                 });
             });
 
-            // Remove todos os pacotes em trânsito
+            // Remove todos os pacotes em trânsito do DOM
             packetsInTransit.forEach(p => {
                 if (p.parentNode) {
                     p.parentNode.removeChild(p);
@@ -646,24 +658,23 @@
             // Limpa o array de pacotes em trânsito
             packetsInTransit = [];
 
-
             // Limpa a lista global de todos os fragmentos criados
             packets = [];
 
-
-            // Limpa qualquer timer ou intervalo em execução (redundante, mas seguro)
+            // Garante que os intervalos estejam limpos
             clearInterval(timer);
             clearInterval(simulationInterval);
+            console.log("Simulação resetada. Buffers e links limpos.");
         }
 
         // Inicia o timer (ou reinicia se já estiver rodando)
         function startTimer() {
-            // Limpa o timer existente antes de criar um novo para evitar múltiplos timers
-            clearInterval(timer);
+            clearInterval(timer); // Limpa qualquer timer existente para evitar duplicidade
             timer = setInterval(() => {
                 elapsedTime += 0.01;
                 updateTimerDisplay();
             }, 10);
+            console.log("Timer iniciado/reiniciado. Novo Timer ID:", timer);
         }
 
         // Atualiza o display do timer
@@ -675,21 +686,23 @@
         function moveNextPacket() {
             if (!isRunning) return; // Se a simulação não estiver rodando, não faça nada
 
-            let movedSomething = false; // Flag para saber se algo foi movido neste tick
+            // console.log("Tick: Movendo pacotes...");
 
             // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
-            if (movePacketFromNode('nodeC_T', 'destR', 'link3')) movedSomething = true;
-            if (movePacketFromNode('nodeB_T', 'nodeC_R', 'link2')) movedSomething = true;
-            if (movePacketFromNode('sourceT', 'nodeB_R', 'link1')) movedSomething = true;
+            // Pacotes saem dos buffers de transmissão para os links
+            movePacketFromNode('nodeC_T', 'destR', 'link3');
+            movePacketFromNode('nodeB_T', 'nodeC_R', 'link2');
+            movePacketFromNode('sourceT', 'nodeB_R', 'link1');
 
             // Prioridade 2: Movimentos Internos de Buffers (dentro do nó)
-            if (moveInternalPackets('destR', 'destB')) movedSomething = true;
-            if (moveInternalPackets('nodeC_B', 'nodeC_T')) movedSomething = true;
-            if (moveInternalPackets('nodeC_R', 'nodeC_B')) movedSomething = true;
-            if (moveInternalPackets('nodeB_B', 'nodeB_T')) movedSomething = true;
-            if (moveInternalPackets('nodeB_R', 'nodeB_B')) movedSomething = true;
-            if (moveInternalPackets('sourceB', 'sourceT')) movedSomething = true;
-
+            // Pacotes se movem dentro dos nós (R -> B, B -> T)
+            // Ordem reversa do fluxo para simular processamento e evitar que um pacote chegue e seja transmitido no mesmo tick.
+            moveInternalPackets('destR', 'destB');
+            moveInternalPackets('nodeC_B', 'nodeC_T');
+            moveInternalPackets('nodeC_R', 'nodeC_B');
+            moveInternalPackets('nodeB_B', 'nodeB_T');
+            moveInternalPackets('nodeB_R', 'nodeB_B');
+            moveInternalPackets('sourceB', 'sourceT');
 
             // A verificação de término é feita a cada tick principal.
             // É importante chamar checkSimulationEnd() regularmente.
@@ -716,6 +729,7 @@
                     packet.dataset.location = targetId;
                     targetBuffer.appendChild(packet);
                     reorganizePacketsInBuffer(targetId);
+                    // console.log(`Moved packet ${packet.dataset.id} from ${sourceId} to ${targetId}`);
                     return true;
                 }
             }
@@ -768,6 +782,7 @@
 
                 document.querySelector('.network').appendChild(transitPacket);
                 packetsInTransit.push(transitPacket);
+                // console.log(`Packet ${transitPacket.dataset.id} entered link ${linkId}`);
 
                 let transitTime = animationSpeed; // Baseado na velocidade global
                 if (delays[linkId]) {
@@ -793,9 +808,9 @@
             const distance = endX - startX;
 
             function step() {
-                // IMPORTANT: Verifique isRunning a cada frame para parar a animação se a simulação for interrompida
+                // ESSENCIAL: Verifique isRunning a cada frame para parar a animação se a simulação for interrompida
                 if (!isRunning) {
-                    // Se a simulação foi parada, apenas remove o pacote em trânsito sem movê-lo
+                    // console.log(`Stopping animation for packet ${transitPacket.dataset.id} due to isRunning = false.`);
                     if (transitPacket.parentNode) {
                         transitPacket.parentNode.removeChild(transitPacket);
                     }
@@ -813,6 +828,7 @@
                     requestAnimationFrame(step);
                 } else {
                     // Animação concluída, remover pacote em trânsito e adicionar ao buffer de destino
+                    // console.log(`Packet ${transitPacket.dataset.id} finished link animation.`);
                     if (transitPacket.parentNode) {
                         transitPacket.parentNode.removeChild(transitPacket);
                     }
@@ -838,9 +854,10 @@
 
                         targetBuffer.appendChild(newPacket);
                         reorganizePacketsInBuffer(targetBuffer.id);
+                        // console.log(`Packet ${newPacket.dataset.id} arrived at ${targetBuffer.id}`);
                     } else {
                         console.warn(`Buffer ${targetBuffer.id} cheio! Pacote ${transitPacket.dataset.id} descartado.`);
-                        // Poderia adicionar uma lógica para retransmissão ou perda de pacotes aqui
+                        // Adicionar uma lógica para retransmissão ou perda de pacotes aqui seria mais complexo.
                     }
 
                     // Após cada pacote chegar ao destino final ou ser descartado, checa se a simulação terminou
@@ -855,28 +872,30 @@
             const buffer = document.getElementById(bufferId);
             if (!buffer) return;
 
-            // Converte NodeList para Array e filtra apenas os elementos que são pacotes
             const packetsInThisBuffer = Array.from(buffer.children).filter(el => el.classList.contains('packet'));
 
-            // Empilha do primeiro para o último, de baixo para cima
             packetsInThisBuffer.forEach((packet, index) => {
-                // Cada pacote tem 10px de altura + 2px de espaçamento = 12px por pacote
-                packet.style.bottom = `${index * 12}px`;
+                packet.style.bottom = `${index * 12}px`; // 10px altura + 2px espaçamento
             });
         }
 
         // Verifica se a simulação terminou
         function checkSimulationEnd() {
-            // Verifica se todos os fragmentos criados foram recebidos no buffer final (destB)
+            // Se a simulação já não está rodando, não faça nada
+            if (!isRunning) {
+                // console.log("checkSimulationEnd: Simulação já não está rodando, ignorando.");
+                return;
+            }
+
             const totalExpectedFragments = parseInt(document.getElementById('messageSize').value);
             const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
 
-            const allFragmentsReachedDest = (packetsAtDestB === totalExpectedFragments);
+            const allFragmentsReachedDest = (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0);
 
             // Verifica se não há mais pacotes em trânsito nos links
             const noPacketsInTransit = packetsInTransit.length === 0;
 
-            // Verifica se não há mais pacotes em nenhum outro buffer que não seja o de destino final
+            // Verifica se não há mais pacotes em nenhum outro buffer que não seja o de destino final (destB)
             const noOtherPackets =
                 document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('sourceT').querySelectorAll('.packet').length === 0 &&
@@ -886,13 +905,13 @@
                 document.getElementById('nodeC_R').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('destR').querySelectorAll('.packet').length === 0; // O buffer de recepção do destino também deve estar vazio, pois os pacotes já foram para destB
+                document.getElementById('destR').querySelectorAll('.packet').length === 0;
 
-            // A simulação termina se todas as condições forem verdadeiras E a simulação ainda estiver rodando.
-            // isRunning é crucial para evitar chamadas de stop repetidas ou após um stop manual.
-            if (isRunning && totalExpectedFragments > 0 && allFragmentsReachedDest && noPacketsInTransit && noOtherPackets) {
+            // console.log(`checkSimulationEnd: Expected=${totalExpectedFragments}, AtDestB=${packetsAtDestB}, InTransit=${packetsInTransit.length}, OtherBuffersEmpty=${noOtherPackets}`);
+
+            if (allFragmentsReachedDest && noPacketsInTransit && noOtherPackets) {
+                console.log("TODAS AS CONDIÇÕES DE FIM DE SIMULAÇÃO ATINGIDAS. Chamando stopSimulation()...");
                 stopSimulation(); // Chama stopSimulation para parar o timer e tudo mais
-                alert(`Simulação Concluída! Todos os pacotes chegaram ao destino em ${elapsedTime.toFixed(2)} segundos.`);
             }
         }
     </script>
