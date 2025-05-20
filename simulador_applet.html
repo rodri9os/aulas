@@ -268,10 +268,6 @@
         .packet-group-9 { background-color: #8d6e63; } /* Marrom */
 
         /* Estilo para fragmentos */
-        .fragment {
-            position: relative;
-        }
-
         .fragment::before {
             content: '';
             position: absolute;
@@ -425,7 +421,9 @@
                 <div class="legend-text">Cada retângulo representa um fragmento de dados. Pacotes da mesma mensagem têm a mesma cor.</div>
             </div>
             <div class="legend-item">
-                <div class="legend-color fragment" style="background-color: yellow;"></div>
+                <div class="legend-color" style="background-color: yellow; position: relative;">
+                    <div style="position: absolute; top: 0; right: 0; width: 5px; height: 5px; background-color: red; border-radius: 50%;"></div>
+                </div>
                 <div class="legend-text">Fragmentos (partes de pacotes que não preenchem o tamanho máximo do pacote).</div>
             </div>
             <div class="legend-item">
@@ -453,9 +451,6 @@
         let animationSpeed = 1000; // Velocidade em ms (padrão: lento, tempo para mover um fragmento entre buffers ou iniciar/finalizar um link)
         let delays = { L1: false, L2: false, L3: false };
         let simulationInterval; // O intervalo principal da simulação
-
-        // Estrutura para rastrear pacotes lógicos (grupos de fragmentos)
-        let logicalPackets = [];
 
         // Captura elementos do DOM
         const startBtn = document.getElementById('startBtn');
@@ -507,37 +502,22 @@
 
         // Calcula e atualiza estatísticas
         function updateStats(messageSize, packetSize) {
-            // Cada pacote "lógico" tem 20 bytes de overhead (cabeçalho)
-            // Mas o simulador visualiza fragmentos de 1KB como unidades de dados.
-            // Para a eficiência, consideramos o overhead por "pacote lógico"
             const numLogicalPackets = Math.ceil(messageSize / packetSize);
-            const totalDataBytes = messageSize * 1024; // Convertendo para bytes para cálculo de overhead
+            const totalDataBytes = messageSize * 1024;
             const overheadPerPacket = 20; // bytes
             const totalOverheadBytes = numLogicalPackets * overheadPerPacket;
             const totalTransmittedBytes = totalDataBytes + totalOverheadBytes;
 
-            // 'fragments' aqui significa se a ÚLTIMA UNIDADE DE TRANSMISSÃO é um fragmento
-            // ou seja, se o tamanho da mensagem não é um múltiplo exato do tamanho do pacote
-            const fragments = (messageSize % packetSize !== 0) ? 1 : 0;
+            const fragments = (messageSize % packetSize !== 0) ? 1 : 0; // Se houver resto, significa um fragmento no último pacote lógico
 
-            const efficiency = (totalDataBytes / totalTransmittedBytes) * 100;
+            const efficiency = (totalTransmittedBytes > 0) ? (totalDataBytes / totalTransmittedBytes) * 100 : 0;
 
-            messageStats = {
-                messageSize: messageSize,
-                packetSize: packetSize,
-                numPackets: numLogicalPackets, // Número de "pacotes lógicos"
-                fragments: fragments, // 1 se houver um fragmento de tamanho menor que o pacote, 0 caso contrário
-                overhead: (totalOverheadBytes / 1024).toFixed(2), // Overhead em kB
-                efficiency: efficiency.toFixed(2)
-            };
-
-            // Atualiza os elementos HTML
-            document.getElementById('statMessageSize').textContent = messageStats.messageSize;
-            document.getElementById('statPacketSize').textContent = messageStats.packetSize;
-            document.getElementById('statNumPackets').textContent = messageStats.numPackets;
-            document.getElementById('statFragments').textContent = messageStats.fragments;
-            document.getElementById('statOverhead').textContent = messageStats.overhead;
-            document.getElementById('statEfficiency').textContent = messageStats.efficiency;
+            document.getElementById('statMessageSize').textContent = messageSize;
+            document.getElementById('statPacketSize').textContent = packetSize;
+            document.getElementById('statNumPackets').textContent = numLogicalPackets;
+            document.getElementById('statFragments').textContent = fragments;
+            document.getElementById('statOverhead').textContent = (totalOverheadBytes / 1024).toFixed(2);
+            document.getElementById('statEfficiency').textContent = efficiency.toFixed(2);
         }
 
         // Inicia a simulação
@@ -561,29 +541,28 @@
             // Cria os fragmentos (cada um representando 1kB)
             let currentMessageBytes = messageSize;
             let packetGroupCounter = 0; // Para rastrear a qual "pacote lógico" o fragmento pertence
+            let fragmentCounter = 0; // Contador global de fragmentos para ID única
 
             while (currentMessageBytes > 0) {
                 const bytesInThisLogicalPacket = Math.min(packetSize, currentMessageBytes);
                 currentMessageBytes -= bytesInThisLogicalPacket;
 
-                // Para cada kB dentro do pacote lógico, cria um fragmento visual
                 for (let j = 0; j < bytesInThisLogicalPacket; j++) {
                     const packet = document.createElement('div');
                     packet.className = `packet packet-group-${packetGroupCounter % 10}`;
 
-                    // Se este é o último fragmento de um pacote lógico e o pacote lógico não preencheu o tamanho máximo
                     const isLastFragmentOfLogicalPacket = (j === bytesInThisLogicalPacket - 1);
                     if (isLastFragmentOfLogicalPacket && bytesInThisLogicalPacket < packetSize) {
                         packet.classList.add('fragment');
                     }
 
-                    packet.dataset.id = `${packetGroupCounter}-${j}`;
+                    packet.dataset.id = `f${fragmentCounter++}`; // ID única para cada fragmento
                     packet.dataset.packetGroup = packetGroupCounter;
                     packet.dataset.size = 1; // Cada fragmento representa 1kB
                     packet.dataset.location = 'sourceB';
                     packet.dataset.status = 'waiting';
                     packet.textContent = `P${packetGroupCounter + 1}f${j + 1}`; // Ex: P1f1 (Pacote 1, fragmento 1)
-                    packet.style.height = '10px'; // Altura fixa para todos os fragmentos
+                    packet.style.height = '10px';
                     document.getElementById('sourceB').appendChild(packet);
                     packets.push(packet);
                 }
@@ -620,7 +599,8 @@
         function resumeSimulation() {
             isRunning = true;
             startTimer();
-            simulationInterval = setInterval(moveNextPacket, animationSpeed);
+            // Reajusta o intervalo caso a velocidade tenha sido alterada enquanto pausado
+            updateSpeed();
             resumeBtn.disabled = true;
             pauseBtn.disabled = false;
         }
@@ -631,7 +611,7 @@
             clearInterval(timer);
             clearInterval(simulationInterval);
 
-            // Limpa todos os pacotes
+            // Limpa todos os pacotes e elementos de trânsito
             resetSimulation();
 
             // Reset do timer
@@ -647,34 +627,27 @@
 
         // Reinicia a simulação
         function resetSimulation() {
-            // Remove todos os pacotes
-            packets.forEach(packet => {
-                if (packet.parentNode) {
-                    packet.parentNode.removeChild(packet);
+            // Remove todos os pacotes dos buffers
+            document.querySelectorAll('.buffer').forEach(buffer => {
+                while (buffer.firstChild) {
+                    buffer.removeChild(buffer.firstChild);
                 }
             });
 
-            // Remove pacotes em trânsito
-            packetsInTransit.forEach(packet => {
-                if (packet.parentNode) {
-                    packet.parentNode.removeChild(packet);
+            // Remove todos os pacotes em trânsito
+            packetsInTransit.forEach(p => {
+                if (p.parentNode) {
+                    p.parentNode.removeChild(p);
                 }
             });
 
+            // Limpa as listas de pacotes
             packets = [];
             packetsInTransit = [];
-            // logicalPackets = []; // Não é estritamente necessário resetar, pois é recriado em startSimulation
 
             // Limpa qualquer timer ou intervalo em execução
             clearInterval(timer);
             clearInterval(simulationInterval);
-
-            // Limpa os buffers na tela
-            document.querySelectorAll('.buffer').forEach(buffer => {
-                while (buffer.firstChild && buffer.firstChild.classList.contains('packet')) {
-                    buffer.removeChild(buffer.firstChild);
-                }
-            });
         }
 
         // Inicia o timer
@@ -694,28 +667,17 @@
         function moveNextPacket() {
             if (!isRunning) return;
 
-            // Ordem de processamento:
-            // 1. Tentar mover pacotes dos buffers de transmissão para os links.
-            //    Isso garante que os links sejam utilizados o mais rápido possível.
-            // 2. Tentar mover pacotes internamente nos nós (R -> B, B -> T).
-            //    Isso processa os pacotes que chegaram e os prepara para a próxima transmissão.
-
-            // Ordem reversa para evitar que um pacote recém-chegado seja transmitido no mesmo tick,
-            // simulando a necessidade de processamento nos buffers.
-            // Ex: C_T -> Link3, B_T -> Link2, Source_T -> Link1
-            // Depois: C_B -> C_T, C_R -> C_B
-            // Depois: B_B -> B_T, B_R -> B_B
-            // Depois: Source_B -> Source_T
-            // E o destino final: destR -> destB
-
             let movedThisTick = false;
 
             // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
+            // Pacotes saem dos buffers de transmissão para os links
             if (movePacketFromNode('nodeC_T', 'destR', 'link3')) movedThisTick = true;
             if (movePacketFromNode('nodeB_T', 'nodeC_R', 'link2')) movedThisTick = true;
             if (movePacketFromNode('sourceT', 'nodeB_R', 'link1')) movedThisTick = true;
 
+
             // Prioridade 2: Movimentos Internos de Buffers (dentro do nó)
+            // Pacotes se movem dentro dos nós (R -> B, B -> T)
             // Destino
             if (moveInternalPackets('destR', 'destB')) movedThisTick = true;
 
@@ -730,7 +692,7 @@
             // Fonte
             if (moveInternalPackets('sourceB', 'sourceT')) movedThisTick = true;
 
-            // Verifica se a simulação terminou apenas se algo foi movido ou se já não há mais pacotes
+            // A verificação de término é feita a cada tick principal
             checkSimulationEnd();
         }
 
@@ -747,91 +709,83 @@
             if (packet) {
                 // Verifica se há espaço no buffer de destino
                 const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
-                if (packetsInTarget < BUFFER_CAPACITY) { // Limite de pacotes por buffer
-                    // Remove do buffer de origem
-                    sourceBuffer.removeChild(packet);
-                    reorganizePacketsInBuffer(sourceId);
+                if (packetsInTarget < BUFFER_CAPACITY) {
+                    sourceBuffer.removeChild(packet); // Remove antes de adicionar
+                    reorganizePacketsInBuffer(sourceId); // Reorganiza a origem
 
-                    // Adiciona ao buffer de destino
                     packet.dataset.location = targetId;
-                    targetBuffer.appendChild(packet);
-                    reorganizePacketsInBuffer(targetId);
-                    return true; // Pacote movido com sucesso
+                    targetBuffer.appendChild(packet); // Adiciona ao destino
+                    reorganizePacketsInBuffer(targetId); // Reorganiza o destino
+                    return true;
                 }
             }
-            return false; // Nenhum pacote movido
+            return false;
         }
 
         // Move pacotes entre nós através dos links
-        function movePacketFromNode(sourceId, targetId, linkId) {
+        function movePacketFromNode(sourceId, targetReceptionBufferId, linkId) {
             const sourceBuffer = document.getElementById(sourceId);
-            const targetBuffer = document.getElementById(targetId); // Buffer de recepção do próximo nó
             const link = document.getElementById(linkId);
 
-            if (!sourceBuffer || !targetBuffer || !link) return false;
+            if (!sourceBuffer || !link) return false;
 
-            // Encontra o pacote mais antigo no buffer de origem (o que está mais embaixo visualmente)
-            const packet = sourceBuffer.querySelector('.packet');
+            const packetToMove = sourceBuffer.querySelector('.packet'); // Pegar o primeiro pacote (o mais "antigo")
 
-            // Verifica se já existe um pacote em trânsito no link atual
+            // Verifica se o link já está ocupado por outro pacote
             const isLinkOccupied = packetsInTransit.some(p => p.dataset.link === linkId);
 
-            if (packet && !isLinkOccupied) {
-                // Cria pacote em trânsito
+            if (packetToMove && !isLinkOccupied) {
+                // Remove o pacote do buffer de origem (visualmente)
+                sourceBuffer.removeChild(packetToMove);
+                reorganizePacketsInBuffer(sourceId);
+
+                // Cria o pacote em trânsito (visualização do pacote no link)
                 const transitPacket = document.createElement('div');
-                transitPacket.className = `packet-in-transit ${packet.classList.contains('fragment') ? 'fragment' : ''}`;
-                // Copia todas as classes 'packet-group-X'
-                Array.from(packet.classList).forEach(cls => {
+                transitPacket.className = 'packet-in-transit';
+                // Copia classes de grupo de cor
+                Array.from(packetToMove.classList).forEach(cls => {
                     if (cls.startsWith('packet-group')) {
                         transitPacket.classList.add(cls);
                     }
                 });
+                // Copia a classe 'fragment' se existir
+                if (packetToMove.classList.contains('fragment')) {
+                    transitPacket.classList.add('fragment');
+                }
 
-                transitPacket.dataset.id = packet.dataset.id;
-                transitPacket.dataset.packetGroup = packet.dataset.packetGroup;
+                transitPacket.dataset.id = packetToMove.dataset.id;
+                transitPacket.dataset.packetGroup = packetToMove.dataset.packetGroup;
                 transitPacket.dataset.link = linkId;
-                transitPacket.dataset.targetBufferId = targetId; // Guarda o ID do buffer de destino
-                transitPacket.dataset.sourcePacketId = packet.dataset.id; // Guarda o ID do fragmento original
-                transitPacket.textContent = packet.textContent;
+                transitPacket.dataset.targetBufferId = targetReceptionBufferId;
+                transitPacket.textContent = packetToMove.textContent;
+                transitPacket.style.height = packetToMove.style.height;
 
                 // Posiciona o pacote no início do link
                 const linkRect = link.getBoundingClientRect();
                 const networkRect = document.querySelector('.network').getBoundingClientRect();
-
-                // Calcula a posição inicial do pacote no link (centralizado verticalmente)
                 transitPacket.style.left = `${linkRect.left - networkRect.left}px`;
                 transitPacket.style.top = `${linkRect.top - networkRect.top + (linkRect.height / 2) - (transitPacket.offsetHeight / 2)}px`;
 
-                // Adiciona o pacote em trânsito à rede
                 document.querySelector('.network').appendChild(transitPacket);
                 packetsInTransit.push(transitPacket);
 
-                // Remove o pacote do buffer de origem (visualmente)
-                sourceBuffer.removeChild(packet);
-                reorganizePacketsInBuffer(sourceId);
-
-
-                // Calcula o tempo de trânsito (com ou sem delay)
-                let transitTime = animationSpeed; // Cada "tick" da simulação é um tempo de trânsito
+                let transitTime = animationSpeed; // Baseado na velocidade global
                 if (delays[linkId]) {
-                    transitTime = animationSpeed * 2; // Tempo duplicado com delay
+                    transitTime = animationSpeed * 2; // Duplica o tempo com delay
                 }
 
-                // Anima o movimento do pacote pelo link
                 animatePacketOnLink(transitPacket, link, transitTime);
-                return true; // Pacote movido com sucesso
+                return true;
             }
-            return false; // Nenhum pacote movido
+            return false;
         }
-
 
         // Anima o movimento de um pacote pelo link
         function animatePacketOnLink(transitPacket, link, transitTime) {
             const linkRect = link.getBoundingClientRect();
             const networkRect = document.querySelector('.network').getBoundingClientRect();
-            const targetBuffer = document.getElementById(transitPacket.dataset.targetBufferId); // Recupera o buffer de destino
+            const targetBuffer = document.getElementById(transitPacket.dataset.targetBufferId);
 
-            // Posição final do pacote (fim do link)
             const endX = linkRect.right - networkRect.left - transitPacket.offsetWidth;
 
             const startTime = Date.now();
@@ -839,91 +793,94 @@
             const distance = endX - startX;
 
             function step() {
+                if (!isRunning) { // Pausa a animação se a simulação for pausada/parada
+                    return;
+                }
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / transitTime, 1);
 
-                // Calcula nova posição
                 const currentX = startX + (distance * progress);
                 transitPacket.style.left = `${currentX}px`;
 
                 if (progress < 1) {
-                    // Continua a animação
                     requestAnimationFrame(step);
                 } else {
-                    // Remove o pacote em trânsito
+                    // Animação concluída, remover pacote em trânsito e adicionar ao buffer de destino
                     if (transitPacket.parentNode) {
                         transitPacket.parentNode.removeChild(transitPacket);
                     }
                     packetsInTransit = packetsInTransit.filter(p => p !== transitPacket);
 
-                    // Verifica se há espaço no buffer de destino antes de adicionar
+                    // Verificar se há espaço no buffer de destino antes de adicionar
                     const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
                     if (packetsInTarget < BUFFER_CAPACITY) {
-                        // Cria um novo pacote no buffer de destino (recriado para ser um 'packet' normal)
                         const newPacket = document.createElement('div');
-                        newPacket.className = transitPacket.className.replace('packet-in-transit', 'packet');
-                        newPacket.dataset.id = transitPacket.dataset.sourcePacketId;
+                        newPacket.className = 'packet'; // Volta a ser um pacote normal
+                        Array.from(transitPacket.classList).forEach(cls => {
+                            if (cls.startsWith('packet-group') || cls === 'fragment') {
+                                newPacket.classList.add(cls);
+                            }
+                        });
+                        newPacket.dataset.id = transitPacket.dataset.id;
                         newPacket.dataset.packetGroup = transitPacket.dataset.packetGroup;
                         newPacket.dataset.size = transitPacket.dataset.size;
                         newPacket.dataset.location = targetBuffer.id;
                         newPacket.dataset.status = 'waiting';
-                        newPacket.style.height = transitPacket.style.height;
                         newPacket.textContent = transitPacket.textContent;
+                        newPacket.style.height = transitPacket.style.height;
 
-                        // Adiciona o novo pacote ao buffer de destino
                         targetBuffer.appendChild(newPacket);
-                        packets.push(newPacket); // Adiciona de volta à lista global de pacotes
-
-                        // Reorganiza os pacotes no buffer de destino
                         reorganizePacketsInBuffer(targetBuffer.id);
                     } else {
-                        // Se não houver espaço, o pacote é "descartado" ou espera.
-                        // Para este simulador, vamos descartar para simplificar,
-                        // mas em uma simulação real, haveria retransmissão ou espera.
                         console.warn(`Buffer ${targetBuffer.id} cheio! Pacote ${transitPacket.dataset.id} descartado.`);
-                        // Poderíamos adicionar uma lógica de retransmissão aqui se fosse um simulador mais complexo.
                     }
-
-                    // A verificação de término é feita a cada tick principal
                 }
             }
-            // Inicia a animação
             requestAnimationFrame(step);
         }
 
-
-        // Reorganiza os pacotes em um buffer para visualização adequada
+        // Reorganiza os pacotes em um buffer para visualização adequada (empilhamento)
         function reorganizePacketsInBuffer(bufferId) {
             const buffer = document.getElementById(bufferId);
             if (!buffer) return;
 
-            // Obtém todos os pacotes dentro do buffer
-            const packetsInBuffer = Array.from(buffer.querySelectorAll('.packet'));
+            // Converte NodeList para Array e filtra apenas os elementos que são pacotes
+            const packetsInBuffer = Array.from(buffer.children).filter(el => el.classList.contains('packet'));
 
-            // Posiciona cada pacote no buffer, empilhando do "fundo" para a "frente"
-            // O pacote mais "antigo" estará no topo (bottom mais alto)
-            packetsInBuffer.forEach((packet, index) => {
-                // A posição 'bottom' é calculada de forma inversa para que o primeiro item fique na base
-                // e os seguintes se empilhem para cima.
-                // Subtraímos 1 para não usar a altura total do buffer, deixando um pequeno espaço no topo
-                // (packetsInBuffer.length - 1 - index) inverte a ordem de empilhamento
-                packet.style.bottom = `${index * 12}px`; // 10px de altura + 2px de espaçamento
+            // Inverte a ordem para que o primeiro item adicionado fique na base (maior `bottom` index)
+            // e os mais novos sejam empilhados para cima
+            packetsInBuffer.reverse().forEach((packet, index) => {
+                // Cada pacote tem 10px de altura + 2px de espaçamento = 12px por pacote
+                packet.style.bottom = `${index * 12}px`;
             });
         }
 
 
         // Verifica se a simulação terminou
         function checkSimulationEnd() {
-            // Conta quantos fragmentos estão no buffer final (destB)
+            const totalExpectedFragments = parseInt(document.getElementById('messageSize').value);
             const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
 
-            // O número total de fragmentos esperados é igual ao tamanho da mensagem (pois cada fragmento é 1kB)
-            const totalExpectedFragments = parseInt(document.getElementById('messageSize').value);
+            // A simulação termina quando todos os fragmentos esperados estão no destino final
+            // E não há mais pacotes em trânsito nos links ou em qualquer outro buffer exceto o de destino.
+            const allFragmentsCreated = packets.length === totalExpectedFragments;
+            const noPacketsOutsideDest = packetsInTransit.length === 0 &&
+                                         document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('sourceT').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeB_R').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeB_B').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeB_T').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeC_R').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
+                                         document.getElementById('destR').querySelectorAll('.packet').length === 0;
 
-            if (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0 && packetsInTransit.length === 0) {
-                // Garante que todos os fragmentos criados inicialmente estão no destino final e nada está em trânsito
-                stopSimulation();
-                alert("Simulação Concluída! Todos os pacotes chegaram ao destino.");
+
+            if (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0 && allFragmentsCreated && noPacketsOutsideDest) {
+                if (isRunning) { // Só chama stop se ainda estiver rodando
+                    stopSimulation();
+                    alert("Simulação Concluída! Todos os pacotes chegaram ao destino.");
+                }
             }
         }
     </script>
