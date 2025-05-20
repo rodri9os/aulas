@@ -854,6 +854,8 @@
                     }
 
                     // Após cada pacote chegar ao destino final ou ser descartado, checa se a simulação terminou
+                    // DICA: É crucial chamar checkSimulationEnd() aqui, pois a chegada do ÚLTIMO pacote
+                    // é o gatilho principal para a condição de parada.
                     checkSimulationEnd();
                 }
             }
@@ -883,16 +885,17 @@
             const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
 
             // Condição 1: Todos os fragmentos esperados chegaram ao destino final (destB)
-            // A condição totalExpectedFragments > 0 é importante para evitar que a simulação termine
-            // imediatamente se a mensagem for 0 (embora o input não permita).
+            // totalExpectedFragments > 0 é para garantir que a simulação tenha algo para processar.
             const allFragmentsReachedDest = (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0);
 
             // Condição 2: Não há pacotes mais em trânsito (nos links)
             const noPacketsInTransit = packetsInTransit.length === 0;
 
-            // Condição 3: Não há pacotes em nenhum outro buffer que não seja o de destino final (destB)
-            // É crucial que 'destR' também esteja vazio, pois os pacotes deveriam ter sido movidos para 'destB'.
-            const noOtherIntermediatePackets =
+            // Condição 3: Não há pacotes em NENHUM buffer intermediário, nem na fonte.
+            // Esta é a parte mais crítica para a simulação com fragmentos.
+            // Precisamos garantir que todos os buffers de "trabalho" estão vazios,
+            // e que o único lugar com pacotes é o destino final.
+            const allIntermediateBuffersEmpty =
                 document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('sourceT').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeB_R').querySelectorAll('.packet').length === 0 &&
@@ -901,10 +904,14 @@
                 document.getElementById('nodeC_R').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('destR').querySelectorAll('.packet').length === 0;
+                document.getElementById('destR').querySelectorAll('.packet').length === 0; // O buffer de recepção do destino também deve estar vazio
+
+
+            console.log(`Check End: isRunning=${isRunning}, DestB=${packetsAtDestB}/${totalExpectedFragments}, InTransit=${noPacketsInTransit}, IntermediateEmpty=${allIntermediateBuffersEmpty}`);
+
 
             // Se todas as condições forem verdadeiras, a simulação terminou
-            if (allFragmentsReachedDest && noPacketsInTransit && noOtherIntermediatePackets) {
+            if (allFragmentsReachedDest && noPacketsInTransit && allIntermediateBuffersEmpty) {
                 console.log("TODAS AS CONDIÇÕES DE FIM DE SIMULAÇÃO ATINGIDAS. Chamando stopSimulation()...");
                 stopSimulation(); // Chama stopSimulation para parar o timer e tudo mais
             }
