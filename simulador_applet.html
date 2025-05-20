@@ -451,6 +451,7 @@
         let animationSpeed = 1000; // Velocidade em ms (padrão: lento, tempo para mover um fragmento entre buffers ou iniciar/finalizar um link)
         let delays = { L1: false, L2: false, L3: false };
         let simulationInterval; // O intervalo principal da simulação que move os pacotes
+        let checkEndTimeoutId = null; // Para controlar o setTimeout da verificação final
 
         // Captura elementos do DOM
         const startBtn = document.getElementById('startBtn');
@@ -594,6 +595,7 @@
             isRunning = false;
             clearInterval(timer); // Para o timer
             clearInterval(simulationInterval); // Para o loop principal de movimento
+            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Limpa qualquer timeout de verificação pendente
             pauseBtn.disabled = true;
             resumeBtn.disabled = false;
             console.log("Simulação pausada. Timer parado.");
@@ -621,6 +623,7 @@
 
             clearInterval(timer); // Garante que o timer seja parado
             clearInterval(simulationInterval); // Garante que o loop principal seja parado
+            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Limpa qualquer timeout de verificação pendente
 
             // Exibe o alerta com o tempo final ANTES de resetar elapsedTime
             alert(`Simulação Concluída! Todos os pacotes chegaram ao destino em ${elapsedTime.toFixed(2)} segundos.`);
@@ -667,6 +670,7 @@
             // Garante que os intervalos estejam limpos
             clearInterval(timer);
             clearInterval(simulationInterval);
+            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Limpa qualquer timeout de verificação pendente
             console.log("Simulação resetada. Buffers e links limpos.");
         }
 
@@ -704,8 +708,10 @@
             moveInternalPackets('nodeB_R', 'nodeB_B');
             moveInternalPackets('sourceB', 'sourceT');
 
-            // A verificação de término é feita a cada tick principal.
-            checkSimulationEnd();
+            // Agendamos a verificação de término com um pequeno atraso.
+            // Isso permite que o DOM se atualize e as transições de "bottom" ocorram.
+            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Cancela o anterior se houver
+            checkEndTimeoutId = setTimeout(checkSimulationEnd, 50); // Atraso de 50ms para garantir atualização do DOM
         }
 
         // Move pacotes entre buffers dentro do mesmo nó
@@ -853,10 +859,7 @@
                         console.warn(`Buffer ${targetBuffer.id} cheio! Pacote ${transitPacket.dataset.id} descartado.`);
                     }
 
-                    // Após cada pacote chegar ao destino final ou ser descartado, checa se a simulação terminou
-                    // DICA: É crucial chamar checkSimulationEnd() aqui, pois a chegada do ÚLTIMO pacote
-                    // é o gatilho principal para a condição de parada.
-                    checkSimulationEnd();
+                    // NÂO CHAME checkSimulationEnd() AQUI. Ele será chamado pelo setInterval principal com delay.
                 }
             }
             requestAnimationFrame(step);
@@ -881,7 +884,9 @@
                 return;
             }
 
-            const totalExpectedFragments = parseInt(document.getElementById('messageSize').value);
+            const messageSize = parseInt(document.getElementById('messageSize').value);
+            const totalExpectedFragments = messageSize; // Cada 1kB é um fragmento visualmente
+
             const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
 
             // Condição 1: Todos os fragmentos esperados chegaram ao destino final (destB)
@@ -892,9 +897,7 @@
             const noPacketsInTransit = packetsInTransit.length === 0;
 
             // Condição 3: Não há pacotes em NENHUM buffer intermediário, nem na fonte.
-            // Esta é a parte mais crítica para a simulação com fragmentos.
-            // Precisamos garantir que todos os buffers de "trabalho" estão vazios,
-            // e que o único lugar com pacotes é o destino final.
+            // Verifica todos os buffers, exceto o destino final (destB).
             const allIntermediateBuffersEmpty =
                 document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('sourceT').querySelectorAll('.packet').length === 0 &&
