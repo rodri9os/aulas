@@ -182,7 +182,7 @@
             font-weight: bold;
             background-color: white;
             padding: 2px 6px;
-            border-radius: 4px;
+            border-radius: 44px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.2);
         }
 
@@ -562,11 +562,11 @@
                     packet.dataset.packetGroup = packetGroupCounter;
                     packet.dataset.size = 1; // Cada fragmento representa 1kB
                     packet.dataset.location = 'sourceB';
-                    packet.dataset.status = 'waiting';
+                    packet.dataset.status = 'waiting'; // Adiciona um status para cada fragmento
                     packet.textContent = `P${packetGroupCounter + 1}f${j + 1}`; // Ex: P1f1 (Pacote 1, fragmento 1)
                     packet.style.height = '10px';
                     document.getElementById('sourceB').appendChild(packet);
-                    packets.push(packet); // Adiciona à lista global de todos os fragmentos criados
+                    packets.push(packet); // Adiciona à lista global de todos os fragmentos criados (objetos DOM)
                 }
                 packetGroupCounter++;
             }
@@ -614,7 +614,7 @@
 
         // Para a simulação COMPLETAMENTE (manual ou automática)
         function stopSimulation() {
-            if (!isRunning) { // Evita parar algo que já está parado ou já foi manualmente parado
+            if (!isRunning) {
                 console.log("stopSimulation chamada, mas já não está rodando (isRunning é false).");
                 return;
             }
@@ -661,16 +661,14 @@
                     p.parentNode.removeChild(p);
                 }
             });
-            // Limpa o array de pacotes em trânsito
-            packetsInTransit = [];
+            packetsInTransit = []; // Limpa o array de pacotes em trânsito
 
-            // Limpa a lista global de todos os fragmentos criados
-            packets = [];
+            packets = []; // Limpa a lista global de todos os fragmentos criados
 
             // Garante que os intervalos estejam limpos
             clearInterval(timer);
             clearInterval(simulationInterval);
-            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Limpa qualquer timeout de verificação pendente
+            if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId);
             console.log("Simulação resetada. Buffers e links limpos.");
         }
 
@@ -694,31 +692,24 @@
             if (!isRunning) return;
 
             // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
-            // Pacotes saem dos buffers de transmissão para os links
             movePacketFromNode('nodeC_T', 'destR', 'link3');
             movePacketFromNode('nodeB_T', 'nodeC_R', 'link2');
             movePacketFromNode('sourceT', 'nodeB_R', 'link1');
 
             // Prioridade 2: Movimentos Internos de Buffers (dentro do nó)
-            // Pacotes se movem dentro dos nós. A ordem é importante.
-            // Move de R para B, e de B para T
             moveInternalPackets('nodeB_R', 'nodeB_B');
             moveInternalPackets('nodeB_B', 'nodeB_T');
 
             moveInternalPackets('nodeC_R', 'nodeC_B');
             moveInternalPackets('nodeC_B', 'nodeC_T');
 
-            // Especialmente importante para o destino: mover de destR para destB
-            // Este DEVE ser o último movimento interno, garantindo que o pacote chegue ao destino final.
+            // Importante: mover de destR para destB
             moveInternalPackets('destR', 'destB');
 
             // Por último, a fonte continua empurrando pacotes para a rede
             moveInternalPackets('sourceB', 'sourceT');
 
-
             // Agendamos a verificação de término com um pequeno atraso.
-            // Isso permite que o DOM se atualize e as transições de "bottom" ocorram.
-            // Atraso aumentado para ser mais robusto.
             if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId);
             checkEndTimeoutId = setTimeout(checkSimulationEnd, 100); // Atraso de 100ms para maior robustez
         }
@@ -730,11 +721,9 @@
 
             if (!sourceBuffer || !targetBuffer) return false;
 
-            // Encontra o pacote mais antigo no buffer de origem (o que está mais embaixo visualmente)
             const packet = sourceBuffer.querySelector('.packet');
 
             if (packet) {
-                // Verifica se há espaço no buffer de destino
                 const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
                 if (packetsInTarget < BUFFER_CAPACITY) {
                     sourceBuffer.removeChild(packet);
@@ -743,6 +732,12 @@
                     packet.dataset.location = targetId;
                     targetBuffer.appendChild(packet);
                     reorganizePacketsInBuffer(targetId);
+
+                    // Se o pacote chegou ao buffer final (destB), atualiza seu status
+                    if (targetId === 'destB') {
+                        packet.dataset.status = 'at-destB';
+                        // console.log(`Fragmento ${packet.dataset.id} chegou a destB.`);
+                    }
                     return true;
                 }
             }
@@ -756,29 +751,21 @@
 
             if (!sourceBuffer || !link) return false;
 
-            const packetToMove = sourceBuffer.querySelector('.packet'); // Pegar o primeiro pacote (o mais "antigo")
+            const packetToMove = sourceBuffer.querySelector('.packet');
 
-            // Verifica se o link já está ocupado por outro pacote
             const isLinkOccupied = packetsInTransit.some(p => p.dataset.link === linkId);
 
             if (packetToMove && !isLinkOccupied) {
-                // Remove o pacote do buffer de origem (visualmente)
                 sourceBuffer.removeChild(packetToMove);
                 reorganizePacketsInBuffer(sourceId);
 
-                // Cria o pacote em trânsito (visualização do pacote no link)
                 const transitPacket = document.createElement('div');
                 transitPacket.className = 'packet-in-transit';
-                // Copia classes de grupo de cor
                 Array.from(packetToMove.classList).forEach(cls => {
-                    if (cls.startsWith('packet-group')) {
+                    if (cls.startsWith('packet-group') || cls === 'fragment') {
                         transitPacket.classList.add(cls);
                     }
                 });
-                // Copia a classe 'fragment' se existir
-                if (packetToMove.classList.contains('fragment')) {
-                    transitPacket.classList.add('fragment');
-                }
 
                 transitPacket.dataset.id = packetToMove.dataset.id;
                 transitPacket.dataset.packetGroup = packetToMove.dataset.packetGroup;
@@ -787,7 +774,6 @@
                 transitPacket.textContent = packetToMove.textContent;
                 transitPacket.style.height = packetToMove.style.height;
 
-                // Posiciona o pacote no início do link
                 const linkRect = link.getBoundingClientRect();
                 const networkRect = document.querySelector('.network').getBoundingClientRect();
                 transitPacket.style.left = `${linkRect.left - networkRect.left}px`;
@@ -796,9 +782,9 @@
                 document.querySelector('.network').appendChild(transitPacket);
                 packetsInTransit.push(transitPacket);
 
-                let transitTime = animationSpeed; // Baseado na velocidade global
+                let transitTime = animationSpeed;
                 if (delays[linkId]) {
-                    transitTime = animationSpeed * 2; // Duplica o tempo com delay
+                    transitTime = animationSpeed * 2;
                 }
 
                 animatePacketOnLink(transitPacket, link, transitTime);
@@ -820,7 +806,7 @@
             const distance = endX - startX;
 
             function step() {
-                if (!isRunning) { // Se a simulação foi parada, remove o pacote em trânsito
+                if (!isRunning) {
                     if (transitPacket.parentNode) {
                         transitPacket.parentNode.removeChild(transitPacket);
                     }
@@ -847,7 +833,7 @@
                     const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
                     if (packetsInTarget < BUFFER_CAPACITY) {
                         const newPacket = document.createElement('div');
-                        newPacket.className = 'packet'; // Volta a ser um pacote normal
+                        newPacket.className = 'packet';
                         Array.from(transitPacket.classList).forEach(cls => {
                             if (cls.startsWith('packet-group') || cls === 'fragment') {
                                 newPacket.classList.add(cls);
@@ -857,15 +843,24 @@
                         newPacket.dataset.packetGroup = transitPacket.dataset.packetGroup;
                         newPacket.dataset.size = transitPacket.dataset.size;
                         newPacket.dataset.location = targetBuffer.id;
-                        newPacket.dataset.status = 'waiting';
+                        newPacket.dataset.status = 'waiting'; // Define status inicial
                         newPacket.textContent = transitPacket.textContent;
                         newPacket.style.height = transitPacket.style.height;
 
                         targetBuffer.appendChild(newPacket);
                         reorganizePacketsInBuffer(targetBuffer.id);
+
+                        // Se o pacote chegou ao buffer de recepção do destino, tentamos movê-lo para destB imediatamente
+                        // Isso é uma FORÇA para o pacote ir para o destino final se o destB tiver espaço.
+                        if (targetBuffer.id === 'destR') {
+                            moveInternalPackets('destR', 'destB');
+                        }
+
                     } else {
                         console.warn(`Buffer ${targetBuffer.id} cheio! Pacote ${transitPacket.dataset.id} descartado.`);
-                        // Poderíamos adicionar uma lógica de retransmissão ou perda aqui, mas para esta simulação, ele é descartado.
+                        // Se for descartado aqui, ele *nunca* chegará ao destino.
+                        // Para o propósito de "todos chegaram", precisamos de um mecanismo para lidar com descartes.
+                        // Por enquanto, vamos assumir que os buffers não enchem até o ponto de descarte no final da simulação.
                     }
                 }
             }
@@ -890,13 +885,9 @@
                 return;
             }
 
-            const messageSize = parseInt(document.getElementById('messageSize').value);
-            const totalExpectedFragments = messageSize; // Total de fragmentos que devem chegar ao destino final
-
-            const packetsAtDestB = document.getElementById('destB').querySelectorAll('.packet').length;
-
-            // Condição 1: Todos os fragmentos esperados chegaram ao destino final (destB)
-            const allFragmentsReachedDest = (packetsAtDestB === totalExpectedFragments && totalExpectedFragments > 0);
+            // Condição 1: Todos os fragmentos criados (rastreados no array 'packets') chegaram ao destB
+            // Verificamos se cada fragmento no array 'packets' tem o status 'at-destB'.
+            const allFragmentsReachedDest = packets.every(p => p.dataset.status === 'at-destB') && packets.length > 0;
 
             // Condição 2: Não há pacotes mais em trânsito (nos links)
             const noPacketsInTransit = packetsInTransit.length === 0;
@@ -906,13 +897,24 @@
                 document.getElementById('sourceB').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('sourceT').querySelectorAll('.packet').length === 0;
 
-            // Condição 4: Não há pacotes "presos" em *nenhum* buffer intermediário,
-            // garantindo que todos os pacotes foram processados até o destino final ou descartados.
-            const allIntermediateBuffersEmpty =
-                document.getElementById('nodeB_R').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeB_B').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeB_T').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeC_R').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeC_B').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
-                document.getElementById('destR').querySelectorAll('.packet').length === 0; // Incl
+            console.log(`--- Check End ---`);
+            console.log(`Todos Fragmentos (array) chegaram ao DestB: ${allFragmentsReachedDest}`);
+            console.log(`Nenhum Pacote em Trânsito: ${noPacketsInTransit}`);
+            console.log(`Nenhum Pacote na Fonte: ${noPacketsAtSource}`);
+            console.log(`Total de fragmentos criados: ${packets.length}`);
+            console.log(`Fragmentos no destB (visual): ${document.getElementById('destB').querySelectorAll('.packet').length}`);
+            console.log(`Fragmentos com status 'at-destB': ${packets.filter(p => p.dataset.status === 'at-destB').length}`);
+
+
+            // A simulação termina se:
+            // 1. Todos os fragmentos que foram gerados (e estão no array `packets`) chegaram ao destino final (destB).
+            // 2. Não há pacotes em trânsito nos links.
+            // 3. Não há mais pacotes para serem enviados da fonte.
+            if (allFragmentsReachedDest && noPacketsInTransit && noPacketsAtSource) {
+                console.log("TODAS AS CONDIÇÕES DE FIM DE SIMULAÇÃO ATINGIDAS. Chamando stopSimulation()...");
+                stopSimulation();
+            }
+        }
+    </script>
+</body>
+</html>
