@@ -443,14 +443,14 @@
 
     <script>
         // Variáveis globais
-        let timer;
+        let timer; // Variável para o setInterval do timer
         let elapsedTime = 0;
         let isRunning = false;
         let packets = []; // Lista de todos os fragmentos criados inicialmente
         let packetsInTransit = []; // Fragmentos atualmente nos links
         let animationSpeed = 1000; // Velocidade em ms (padrão: lento, tempo para mover um fragmento entre buffers ou iniciar/finalizar um link)
         let delays = { L1: false, L2: false, L3: false };
-        let simulationInterval; // O intervalo principal da simulação
+        let simulationInterval; // O intervalo principal da simulação que move os pacotes
 
         // Captura elementos do DOM
         const startBtn = document.getElementById('startBtn');
@@ -590,8 +590,8 @@
         // Pausa a simulação
         function pauseSimulation() {
             isRunning = false;
-            clearInterval(timer);
-            clearInterval(simulationInterval);
+            clearInterval(timer); // Para o timer
+            clearInterval(simulationInterval); // Para o loop principal de movimento
             pauseBtn.disabled = true;
             resumeBtn.disabled = false;
         }
@@ -599,8 +599,7 @@
         // Retoma a simulação
         function resumeSimulation() {
             isRunning = true;
-            startTimer();
-            // Reajusta o intervalo caso a velocidade tenha sido alterada enquanto pausado
+            startTimer(); // Reinicia o timer
             updateSpeed(); // Isso recria o simulationInterval com a velocidade atual
             resumeBtn.disabled = true;
             pauseBtn.disabled = false;
@@ -609,8 +608,8 @@
         // Para a simulação
         function stopSimulation() {
             isRunning = false;
-            clearInterval(timer); // Para o cronômetro
-            clearInterval(simulationInterval); // Para a animação
+            clearInterval(timer); // Garante que o timer seja parado
+            clearInterval(simulationInterval); // Garante que o loop principal seja parado
 
             // Limpa todos os pacotes e elementos de trânsito
             resetSimulation();
@@ -644,18 +643,23 @@
                     p.parentNode.removeChild(p);
                 }
             });
-
-            // Limpa as listas de pacotes
-            packets = [];
+            // Limpa o array de pacotes em trânsito
             packetsInTransit = [];
+
+
+            // Limpa a lista global de todos os fragmentos criados
+            packets = [];
+
 
             // Limpa qualquer timer ou intervalo em execução (redundante, mas seguro)
             clearInterval(timer);
             clearInterval(simulationInterval);
         }
 
-        // Inicia o timer
+        // Inicia o timer (ou reinicia se já estiver rodando)
         function startTimer() {
+            // Limpa o timer existente antes de criar um novo para evitar múltiplos timers
+            clearInterval(timer);
             timer = setInterval(() => {
                 elapsedTime += 0.01;
                 updateTimerDisplay();
@@ -669,42 +673,27 @@
 
         // O loop principal da simulação
         function moveNextPacket() {
-            if (!isRunning) return;
+            if (!isRunning) return; // Se a simulação não estiver rodando, não faça nada
 
-            // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
-            // Pacotes saem dos buffers de transmissão para os links
-            // Importante: A ordem aqui define a prioridade de transmissão se múltiplos links estiverem prontos.
-            // Aqui, L3 (destino) tem prioridade, depois L2, depois L1 (fonte).
             let movedSomething = false; // Flag para saber se algo foi movido neste tick
 
+            // Prioridade 1: Movimentos de Transmissão (Buffer T para Link)
             if (movePacketFromNode('nodeC_T', 'destR', 'link3')) movedSomething = true;
             if (movePacketFromNode('nodeB_T', 'nodeC_R', 'link2')) movedSomething = true;
             if (movePacketFromNode('sourceT', 'nodeB_R', 'link1')) movedSomething = true;
 
             // Prioridade 2: Movimentos Internos de Buffers (dentro do nó)
-            // Pacotes se movem dentro dos nós (R -> B, B -> T)
-            // Ordem reversa do fluxo para simular processamento e evitar que um pacote chegue e seja transmitido no mesmo tick.
-            // Destino
             if (moveInternalPackets('destR', 'destB')) movedSomething = true;
-
-            // Nó C
             if (moveInternalPackets('nodeC_B', 'nodeC_T')) movedSomething = true;
             if (moveInternalPackets('nodeC_R', 'nodeC_B')) movedSomething = true;
-
-            // Nó B
             if (moveInternalPackets('nodeB_B', 'nodeB_T')) movedSomething = true;
             if (moveInternalPackets('nodeB_R', 'nodeB_B')) movedSomething = true;
-
-            // Fonte
             if (moveInternalPackets('sourceB', 'sourceT')) movedSomething = true;
 
 
-            // A verificação de término é feita a cada tick principal
-            // Só checa o fim se algo foi movido ou se não há mais pacotes para mover
-            // Isso evita parar a simulação antes que todas as animações de link terminem.
-            if (movedSomething || packetsInTransit.length === 0) {
-                 checkSimulationEnd();
-            }
+            // A verificação de término é feita a cada tick principal.
+            // É importante chamar checkSimulationEnd() regularmente.
+            checkSimulationEnd();
         }
 
         // Move pacotes entre buffers dentro do mesmo nó
@@ -804,9 +793,16 @@
             const distance = endX - startX;
 
             function step() {
-                if (!isRunning) { // Pausa a animação se a simulação for pausada/parada
-                    return;
+                // IMPORTANT: Verifique isRunning a cada frame para parar a animação se a simulação for interrompida
+                if (!isRunning) {
+                    // Se a simulação foi parada, apenas remove o pacote em trânsito sem movê-lo
+                    if (transitPacket.parentNode) {
+                        transitPacket.parentNode.removeChild(transitPacket);
+                    }
+                    packetsInTransit = packetsInTransit.filter(p => p !== transitPacket);
+                    return; // Sai da função de passo para parar a animação
                 }
+
                 const elapsed = Date.now() - startTime;
                 const progress = Math.min(elapsed / transitTime, 1);
 
@@ -860,10 +856,10 @@
             if (!buffer) return;
 
             // Converte NodeList para Array e filtra apenas os elementos que são pacotes
-            const packetsInBuffer = Array.from(buffer.children).filter(el => el.classList.contains('packet'));
+            const packetsInThisBuffer = Array.from(buffer.children).filter(el => el.classList.contains('packet'));
 
             // Empilha do primeiro para o último, de baixo para cima
-            packetsInBuffer.forEach((packet, index) => {
+            packetsInThisBuffer.forEach((packet, index) => {
                 // Cada pacote tem 10px de altura + 2px de espaçamento = 12px por pacote
                 packet.style.bottom = `${index * 12}px`;
             });
@@ -892,9 +888,10 @@
                 document.getElementById('nodeC_T').querySelectorAll('.packet').length === 0 &&
                 document.getElementById('destR').querySelectorAll('.packet').length === 0; // O buffer de recepção do destino também deve estar vazio, pois os pacotes já foram para destB
 
-
+            // A simulação termina se todas as condições forem verdadeiras E a simulação ainda estiver rodando.
+            // isRunning é crucial para evitar chamadas de stop repetidas ou após um stop manual.
             if (isRunning && totalExpectedFragments > 0 && allFragmentsReachedDest && noPacketsInTransit && noOtherPackets) {
-                stopSimulation();
+                stopSimulation(); // Chama stopSimulation para parar o timer e tudo mais
                 alert(`Simulação Concluída! Todos os pacotes chegaram ao destino em ${elapsedTime.toFixed(2)} segundos.`);
             }
         }
