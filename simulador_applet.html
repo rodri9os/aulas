@@ -133,7 +133,7 @@
 
         .buffer {
             width: 60px;
-            height: 100px; /* Altura ajustada para permitir mais pacotes visíveis */
+            height: 150px; /* Altura ajustada para permitir mais pacotes visíveis (temporário) */
             border: 2px solid black;
             background-color: white;
             position: relative;
@@ -477,7 +477,7 @@
         document.getElementById('delay3').addEventListener('change', updateDelays);
 
         // Limite de pacotes por buffer para visualização
-        const BUFFER_CAPACITY = 8; // Ajuste conforme necessário
+        const BUFFER_CAPACITY = 15; // TEMPORARIAMENTE AUMENTADO PARA TESTE
 
         // Atualiza velocidade baseada na seleção do usuário
         function updateSpeed() {
@@ -625,8 +625,10 @@
             clearInterval(simulationInterval); // Garante que o loop principal seja parado
             if (checkEndTimeoutId) clearTimeout(checkEndTimeoutId); // Limpa qualquer timeout de verificação pendente
 
+            console.log("-> PREPARANDO PARA ALERTA DE FIM DE SIMULAÇÃO..."); // NOVO LOG AQUI
             // Exibe o alerta com o tempo final ANTES de resetar elapsedTime
             alert(`Simulação Concluída! Todos os pacotes chegaram ao destino em ${elapsedTime.toFixed(2)} segundos.`);
+            console.log("-> ALERTA DE FIM DE SIMULAÇÃO EXIBIDO."); // NOVO LOG AQUI
 
             // Limpa todos os pacotes e elementos de trânsito
             resetSimulation(); // resetSimulation já faz as limpezas visuais e de arrays
@@ -725,13 +727,26 @@
 
             if (!sourceBuffer || !targetBuffer) return false;
 
+            // LOGS DE DEPURACAO AQUI, NO INICIO DA FUNCAO PARA destR -> destB
+            if (sourceId === 'destR' && targetId === 'destB') {
+                console.log(`[DEBUG - Internal Move] Tentando mover de destR para destB...`);
+                console.log(`[DEBUG - Internal Move] Pacotes em destR: ${sourceBuffer.querySelectorAll('.packet').length}`);
+                console.log(`[DEBUG - Internal Move] Pacotes em destB: ${targetBuffer.querySelectorAll('.packet').length}`);
+            }
+
             // Encontra o pacote mais antigo no buffer de origem (o que está mais embaixo visualmente)
             const packet = sourceBuffer.querySelector('.packet');
 
             if (packet) {
+                if (sourceId === 'destR' && targetId === 'destB') {
+                    console.log(`[DEBUG - Internal Move] Pacote encontrado em destR: ${packet.dataset.id}`);
+                }
                 // Verifica se há espaço no buffer de destino
                 const packetsInTarget = targetBuffer.querySelectorAll('.packet').length;
                 if (packetsInTarget < BUFFER_CAPACITY) {
+                    if (sourceId === 'destR' && targetId === 'destB') {
+                        console.log(`[DEBUG - Internal Move] Espaço disponível em destB. Movendo ${packet.dataset.id} para destB.`);
+                    }
                     sourceBuffer.removeChild(packet);
                     reorganizePacketsInBuffer(sourceId);
 
@@ -745,6 +760,14 @@
                         console.log(`[STATUS UPDATE] Fragmento ${packet.dataset.id} AGORA está em destB. Status: ${packet.dataset.status}`);
                     }
                     return true;
+                } else {
+                    if (sourceId === 'destR' && targetId === 'destB') {
+                        console.warn(`[DEBUG - Internal Move] destB está CHEIO. Não é possível mover ${packet.dataset.id}.`);
+                    }
+                }
+            } else {
+                if (sourceId === 'destR' && targetId === 'destB') {
+                    console.log(`[DEBUG - Internal Move] Nenhum pacote encontrado em destR para mover para destB.`);
                 }
             }
             return false;
