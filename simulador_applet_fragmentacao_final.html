@@ -177,7 +177,7 @@
             font-size: 8px;
             text-align: center;
             position: absolute;
-            transition: all 0.25s linear;
+            transition: all 0.05s linear; /* Transição mais suave para movimento */
         }
         
         .simulation-speed {
@@ -452,7 +452,7 @@
                         inTransit: false,
                         arrivalTime: 0,
                         propagationStart: 0,
-                        isBeingProcessed: false
+                        isBeingProcessed: false // Indica se está sendo processado neste tick
                     });
                 }
             }
@@ -490,9 +490,9 @@
             });
             
             packets.forEach(packet => {
-                // Se o pacote já chegou ao destino final (destinationB), não o renderiza mais.
-                if (packet.routeIndex >= route.length) {
-                    return;
+                // Se o pacote já chegou ao destino final (destinationB) e está lá, ou se já foi "entregue"
+                if (packet.routeIndex >= route.length) { 
+                    return; // Não renderiza pacotes que já completaram a rota
                 }
 
                 const currentStageName = route[packet.routeIndex];
@@ -505,19 +505,26 @@
                 }
                 
                 if (parentElement) {
-                    const packetElement = document.createElement('div');
-                    packetElement.className = 'packet';
-                    packetElement.id = `packet-${packet.id}`;
-                    packetElement.textContent = `1KB`;
-                    
-                    const colorHue = (packet.packageId * 30) % 360;
-                    packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
+                    let packetElement = document.getElementById(`packet-${packet.id}`);
+                    if (!packetElement) { // Cria o elemento se ele não existe
+                        packetElement = document.createElement('div');
+                        packetElement.className = 'packet';
+                        packetElement.id = `packet-${packet.id}`;
+                        packetElement.textContent = `1KB`;
+                        const colorHue = (packet.packageId * 30) % 360;
+                        packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
+                        parentElement.appendChild(packetElement);
+                    } else { // Caso contrário, apenas o move para o novo pai (se mudou)
+                         if (packetElement.parentElement !== parentElement) {
+                            parentElement.appendChild(packetElement);
+                         }
+                    }
                     
                     // Lógica de posicionamento:
                     if (currentStageName.startsWith('link')) {
                         // Posicionamento no link
                         let linkProgress = 0;
-                        if (packet.inTransit) {
+                        if (packet.inTransit && packet.propagationStart > 0 && packet.arrivalTime > packet.propagationStart) {
                             // Calcula o progresso baseado no tempo decorrido no link
                             const timeInLink = simulationTime - packet.propagationStart;
                             const linkDuration = packet.arrivalTime - packet.propagationStart;
@@ -526,10 +533,9 @@
                         // Move o pacote ao longo do link
                         packetElement.style.left = `${linkProgress * (parentElement.offsetWidth - packetElement.offsetWidth)}px`;
                         packetElement.style.top = '2px'; // Centralizado verticalmente no link
-                        parentElement.appendChild(packetElement);
                     } else {
                         // Posicionamento no buffer
-                        // Filtra apenas os pacotes que estão *realmente* no buffer atual
+                        // Filtra apenas os pacotes que estão *realmente* no buffer atual e não estão em trânsito
                         const packetsInBuffer = packets.filter(p => 
                             p.routeIndex === packet.routeIndex && 
                             !p.inTransit // Apenas pacotes que não estão em trânsito (já chegaram ou estão aguardando)
@@ -537,16 +543,19 @@
                         
                         const position = packetsInBuffer.indexOf(packet);
                         
-                        if (position !== -1) {
+                        // Se o pacote está em trânsito e o estágio anterior era um link,
+                        // significa que ele está na borda de entrada do buffer, então renderiza na primeira posição.
+                        // Caso contrário, usa a posição calculada no buffer.
+                        if (packet.inTransit && route.indexOf(currentStageName) > 0 && route[route.indexOf(currentStageName) - 1].startsWith('link')) {
+                            packetElement.style.top = '10px'; 
+                        } else if (position !== -1) {
                             const top = 10 + position * 14;
                             packetElement.style.top = `${top}px`;
-                            parentElement.appendChild(packetElement);
-                        } else if (packet.inTransit && route.indexOf(currentStageName) > 0 && route[route.indexOf(currentStageName) - 1].startsWith('link')) {
-                            // Se o pacote está em trânsito e o estágio anterior era um link, 
-                            // significa que ele está na borda de entrada do buffer.
-                            // Renderiza-o na posição 0 do buffer para indicar que está "chegando" ou sendo processado.
+                        } else {
+                            // Se o pacote não está em trânsito, mas não foi encontrado em packetsInBuffer
+                            // (pode ser um pacote que está sendo processado para saída do buffer),
+                            // ele deve estar na primeira posição de saída.
                             packetElement.style.top = '10px'; 
-                            parentElement.appendChild(packetElement);
                         }
                     }
                 }
@@ -557,32 +566,27 @@
         function processPacketMovement() {
             if (!simulationRunning || simulationPaused) return;
             
+            // Verifica se TODOS os pacotes chegaram ao último estágio (destinationB)
             const allPacketsDelivered = packets.every(p => p.routeIndex >= route.length - 1);
-            if (allPacketsDelivered && packets.length > 0) { // Garante que há pacotes para entregar
+            if (allPacketsDelivered && packets.length > 0) { // Garante que há pacotes para entregar e que a lista não está vazia
                 stopSimulation();
                 return;
             }
             
             const speedFactor = parseInt(simulationSpeed.value);
-            // O timeStep é um avanço de tempo "real" que o simulador tenta cobrir em cada ciclo.
-            // Para maior realismo, a simulação avança em pequenos incrementos de tempo,
-            // e a velocidade da simulação afeta a rapidez com que esses incrementos se traduzem em tempo simulado.
-            // Aqui, cada "tick" de 10ms do setInterval representa 0.01s * (speedFactor / 5) de tempo simulado.
             const timeStep = 0.01 * (speedFactor / 5); 
 
-            // Criar uma cópia dos pacotes para evitar problemas de iteração ao modificar o array original
-            const packetsToProcess = [...packets];
+            // Iterar sobre os pacotes do fim para o início para evitar que um pacote
+            // seja processado múltiplas vezes dentro do mesmo tick (ex: mover sourceB -> sourceT -> link1 no mesmo tick)
+            const packetsToProcess = [...packets].sort((a, b) => b.routeIndex - a.routeIndex); // Processa do fim para o início
 
-            // Mover pacotes do fim para o início da rota para evitar que um pacote seja processado múltiplas vezes no mesmo tick
-            for (let i = packetsToProcess.length - 1; i >= 0; i--) {
+            for (let i = 0; i < packetsToProcess.length; i++) {
                 const packet = packetsToProcess[i];
 
-                if (packet.routeIndex >= route.length - 1) { // Já chegou ao destino (ou está no último buffer)
-                    // Se o pacote está no destinationB e não está mais sendo processado
-                    if (packet.routeIndex === route.length - 1 && !packet.isBeingProcessed) {
-                        packet.isBeingProcessed = true; // Marcar como totalmente processado para não ser movido novamente.
-                    }
-                    continue;
+                // Se o pacote já chegou ou está além do destino final, continue.
+                if (packet.routeIndex >= route.length -1) { 
+                    // Se o pacote está no destinationB, ele está entregue, não precisa processar mais.
+                    continue; 
                 }
 
                 const currentStageName = route[packet.routeIndex];
@@ -598,54 +602,51 @@
                     if (packet.inTransit) {
                         // Se o tempo atual da simulação for maior ou igual ao tempo de chegada esperado no próximo estágio
                         if (simulationTime >= packet.arrivalTime) {
-                            packet.routeIndex++;
-                            packet.inTransit = false;
-                            packet.isBeingProcessed = false; // Liberar para o próximo ciclo, agora no buffer
+                            packet.routeIndex++; // Move para o próximo estágio (buffer)
+                            packet.inTransit = false; // Não está mais em trânsito no link
+                            packet.isBeingProcessed = false; // Liberar para o próximo ciclo
                         }
-                    } else if (!packet.isBeingProcessed && packet.routeIndex > 0) { 
-                        // Pacote acabou de entrar no link, precisa iniciar a transmissão e propagação
-                        // Calcular o tempo que o pacote levará para atravessar este link
+                        // else: O pacote ainda está em trânsito, não faça nada aqui, ele será re-renderizado na posição atual.
+                    } else { // O pacote não está em trânsito (acabou de entrar no link)
+                        // Calcular o tempo total que o pacote levará para atravessar este link
                         let totalLinkTime = TIME_PER_1KB_TRANSMISSION + propagationDelay;
                         
                         packet.propagationStart = simulationTime; // Marca o início da propagação
                         packet.arrivalTime = simulationTime + totalLinkTime; // Tempo de chegada no próximo estágio
-                        packet.inTransit = true; // Pacote agora está em trânsito
-                        packet.isBeingProcessed = true; // Marcar como em processamento para evitar que outro movimento o pegue
+                        packet.inTransit = true; // Pacote agora está em trânsito no link
                     }
                 } 
                 // Lógica para Buffers (R, B, T)
                 else {
-                    // Capacidade dos buffers
+                    // Buffers têm capacidade, links têm capacidade infinita para receber (o atraso é a limitação)
                     const nextBufferCapacity = nextStageName.startsWith('link') ? Infinity : 20; 
-                    const packetsInNextBuffer = packets.filter(p => p.routeIndex === route.indexOf(nextStageName) && !p.inTransit).length;
+                    
+                    // Contar quantos pacotes já estão no *próximo* buffer que não estão em trânsito *saindo* dele.
+                    const packetsInNextBuffer = packets.filter(p => 
+                        p.routeIndex === route.indexOf(nextStageName) && 
+                        !p.inTransit // Considera apenas pacotes "parados" no próximo buffer
+                    ).length;
 
-                    // Se o pacote não está em trânsito e o próximo estágio tem espaço
+                    // Condição para mover: O pacote não está em trânsito E o próximo estágio tem capacidade
                     if (!packet.inTransit && packetsInNextBuffer < nextBufferCapacity) {
-                        // Se o pacote está em um buffer de transmissão (sourceT, nodeBT, nodeCT) e o próximo é um link
+                        // Se o estágio atual é um buffer de transmissão e o próximo é um link
                         if (currentStageName.endsWith('T') && nextStageName.startsWith('link')) {
-                            // Se o link de saída não estiver sendo usado por outro pacote no mesmo tick
-                            const linkOutgoing = packets.some(p => p.routeIndex === route.indexOf(nextStageName) && p.inTransit);
-                            if (!linkOutgoing) {
-                                packet.routeIndex++;
-                                packet.inTransit = false; // Será definido como true quando entrar no link
-                                packet.isBeingProcessed = true; // Marcar como processado para não ser movido novamente neste tick
+                            // Verifica se o link já tem um pacote "inTransit" que ainda não terminou sua propagação.
+                            // Isso simula que apenas um pacote pode estar em transmissão (ocupando a "largura de banda") por vez para um link.
+                            const linkOccupied = packets.some(p => p.routeIndex === route.indexOf(nextStageName) && p.inTransit);
+                            
+                            if (!linkOccupied) { // Se o link não estiver ocupado, pode mover o pacote para o link
+                                packet.routeIndex++; // Move para o link
+                                // inTransit será definido como true na próxima iteração do link
                             }
                         } else {
-                            // Movimento entre buffers (R -> B, B -> T, ou T -> R/B se não for link) é instantâneo na simulação
+                            // Movimento entre buffers (R -> B, B -> T, ou T -> R/B se não for link) é instantâneo
                             packet.routeIndex++;
-                            packet.inTransit = false;
-                            packet.isBeingProcessed = true; // Marcar como processado
                         }
                     }
                 }
             }
-            // Resetar o isBeingProcessed para false para o próximo tick, exceto para pacotes em trânsito no link
-            packets.forEach(p => {
-                if (!p.inTransit) {
-                    p.isBeingProcessed = false;
-                }
-            });
-            renderPackets();
+            renderPackets(); // Chama renderizar após todos os movimentos do tick
         }
         
         // Iniciar a simulação
@@ -658,19 +659,15 @@
             timerDisplay.textContent = `TEMPO DECORRIDO: 0.00`;
             
             updateButtonStates();
-            createPackets();
+            createPackets(); // Cria os pacotes e os renderiza inicialmente
             
             timerInterval = setInterval(() => {
                 if (!simulationPaused) {
                     const speedFactor = parseInt(simulationSpeed.value);
-                    // O valor 0.01 * (speedFactor / 5) determina o incremento do tempo simulado por cada tick de 10ms.
-                    // Se speedFactor for 5, simulationTime aumenta em 0.01 a cada 10ms (1 segundo simulado a cada segundo real).
-                    // Se speedFactor for 10, simulationTime aumenta em 0.02 a cada 10ms (2 segundos simulados a cada segundo real).
-                    // Se speedFactor for 1, simulationTime aumenta em 0.002 a cada 10ms (0.2 segundos simulados a cada segundo real).
                     simulationTime += 0.01 * (speedFactor / 5); 
                     timerDisplay.textContent = `TEMPO DECORRIDO: ${simulationTime.toFixed(2)}`;
                     
-                    processPacketMovement();
+                    processPacketMovement(); // Processa e renderiza os movimentos a cada tick
                 }
             }, 10);
         }
@@ -699,6 +696,7 @@
             simulationRunning = false;
             simulationPaused = false;
             
+            // Remove todos os elementos visuais dos pacotes
             Object.values(buffers).forEach(buffer => {
                 const existingPackets = buffer.querySelectorAll('.packet');
                 existingPackets.forEach(p => p.remove());
@@ -707,7 +705,7 @@
                 const existingPackets = link.querySelectorAll('.packet');
                 existingPackets.forEach(p => p.remove());
             });
-            packets = [];
+            packets = []; // Limpa a lista de pacotes
             
             updateButtonStates();
         }
