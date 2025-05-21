@@ -308,6 +308,7 @@
                 speed: 5,
                 animations: [],
                 packetWidth: 20, // Largura base para um pacote de 1Kb
+                baseLinkSpeed: 4, // Taxa de enlace base em Kbits/s (4 Kb/s)
                 // Adiciona um mapa para rastrear a ocupação dos buffers/links
                 occupancy: {
                     'sourceB': null, 'sourceT': null,
@@ -488,7 +489,11 @@
                 if (!simulation.isRunning || simulation.isPaused) return;
 
                 const route = getPacketRoute();
-                const baseDuration = 2000 / simulation.speed; // Duração base para cada movimento
+                // Duração para movimentos internos de buffer (ex: tempo de processamento)
+                const bufferMovementDuration = 1000 / simulation.speed; // 1 segundo dividido pelo valor do slider de velocidade
+
+                // Taxa de enlace efetiva baseada no slider de velocidade
+                const effectiveLinkSpeed = simulation.baseLinkSpeed * simulation.speed; // Escala a taxa de enlace com a velocidade da simulação
 
                 for (let i = 0; i < simulation.packets.length; i++) {
                     const packet = simulation.packets[i];
@@ -504,7 +509,7 @@
                     if (packet.currentLocation === null) {
                         // Tentar mover para o primeiro buffer (sourceB)
                         if (simulation.occupancy['sourceB'] === null) {
-                            await movePacketToLocation(packet.id, 'sourceB', baseDuration / 2);
+                            await movePacketToLocation(packet.id, 'sourceB', bufferMovementDuration);
                             packet.currentRouteIndex++;
                         }
                         continue; // Próximo pacote
@@ -534,16 +539,16 @@
                     // Verificar se o próximo local está livre
                     if (simulation.occupancy[nextTargetLocation] === null) {
                         let duration;
-                        // Se o próximo local é um link, use a duração do link e verifique delays
+                        // Se o próximo local é um link, calcule o tempo de transmissão + delay de propagação
                         if (nextTargetLocation.startsWith('link')) {
-                            duration = baseDuration;
-                            let additionalDelay = 0;
-                            if (nextTargetLocation === 'link1' && delayL1Checkbox.checked) additionalDelay = 500;
-                            if (nextTargetLocation === 'link2' && delayL2Checkbox.checked) additionalDelay = 500;
-                            if (nextTargetLocation === 'link3' && delayL3Checkbox.checked) additionalDelay = 500;
-                            duration += additionalDelay;
+                            const transmissionTimeMs = (packet.size / effectiveLinkSpeed) * 1000; // Converter para milissegundos
+                            let propagationDelayMs = 0;
+                            if (nextTargetLocation === 'link1' && delayL1Checkbox.checked) propagationDelayMs = 500;
+                            if (nextTargetLocation === 'link2' && delayL2Checkbox.checked) propagationDelayMs = 500;
+                            if (nextTargetLocation === 'link3' && delayL3Checkbox.checked) propagationDelayMs = 500;
+                            duration = transmissionTimeMs + propagationDelayMs;
                         } else { // Se é um buffer
-                            duration = baseDuration / 2;
+                            duration = bufferMovementDuration;
                         }
                         
                         await movePacketToLocation(packet.id, nextTargetLocation, duration);
