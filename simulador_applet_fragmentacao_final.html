@@ -367,9 +367,9 @@
         const messageSize = document.getElementById('messageSize');
         const packetSize = document.getElementById('packetSize');
         const simulationSpeed = document.getElementById('simulationSpeed');
-        const addDelayL1 = document.getElementById('addDelayL1'); // Renomeado
-        const addDelayL2 = document.getElementById('addDelayL2'); // Renomeado
-        const addDelayL3 = document.getElementById('addDelayL3'); // Renomeado
+        const addDelayL1 = document.getElementById('addDelayL1');
+        const addDelayL2 = document.getElementById('addDelayL2');
+        const addDelayL3 = document.getElementById('addDelayL3');
         const startBtn = document.getElementById('startBtn');
         const pauseBtn = document.getElementById('pauseBtn');
         const resumeBtn = document.getElementById('resumeBtn');
@@ -390,6 +390,13 @@
             destinationB: document.getElementById('destinationB')
         };
         
+        // Links
+        const links = {
+            link1: document.getElementById('link1'),
+            link2: document.getElementById('link2'),
+            link3: document.getElementById('link3')
+        };
+
         // Variáveis de controle da simulação
         let simulationRunning = false;
         let simulationPaused = false;
@@ -465,45 +472,81 @@
                 }
             }
             
+            // Inicializa todos os pacotes no sourceB
             packets.forEach(p => p.routeIndex = route.indexOf('sourceB'));
             renderPackets();
         }
         
-        // Renderizar os pacotes nos buffers
+        // Renderizar os pacotes nos buffers e links
         function renderPackets() {
+            // Remove todos os pacotes existentes dos buffers e links
             Object.values(buffers).forEach(buffer => {
                 const existingPackets = buffer.querySelectorAll('.packet');
                 existingPackets.forEach(p => p.remove());
             });
+            Object.values(links).forEach(link => {
+                const existingPackets = link.querySelectorAll('.packet');
+                existingPackets.forEach(p => p.remove());
+            });
             
             packets.forEach(packet => {
-                if (packet.routeIndex < route.length) {
-                    const currentBufferName = route[packet.routeIndex];
+                // Se o pacote já chegou ao destino final (destinationB), não o renderiza mais.
+                if (packet.routeIndex >= route.length) {
+                    return;
+                }
+
+                const currentStageName = route[packet.routeIndex];
+                let parentElement = null;
+
+                if (currentStageName.startsWith('link')) {
+                    parentElement = links[currentStageName];
+                } else {
+                    parentElement = buffers[currentStageName];
+                }
+                
+                if (parentElement) {
+                    const packetElement = document.createElement('div');
+                    packetElement.className = 'packet';
+                    packetElement.id = `packet-${packet.id}`;
+                    packetElement.textContent = `1KB`;
                     
-                    if (!currentBufferName.startsWith('link')) {
-                        const bufferElement = buffers[currentBufferName];
+                    const colorHue = (packet.packageId * 30) % 360;
+                    packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
+                    
+                    // Lógica de posicionamento:
+                    if (currentStageName.startsWith('link')) {
+                        // Posicionamento no link
+                        let linkProgress = 0;
+                        if (packet.inTransit) {
+                            // Calcula o progresso baseado no tempo decorrido no link
+                            const timeInLink = simulationTime - packet.propagationStart;
+                            const linkDuration = packet.arrivalTime - packet.propagationStart;
+                            linkProgress = Math.min(1, Math.max(0, timeInLink / linkDuration));
+                        }
+                        // Move o pacote ao longo do link
+                        packetElement.style.left = `${linkProgress * (parentElement.offsetWidth - packetElement.offsetWidth)}px`;
+                        packetElement.style.top = '2px'; // Centralizado verticalmente no link
+                        parentElement.appendChild(packetElement);
+                    } else {
+                        // Posicionamento no buffer
+                        // Filtra apenas os pacotes que estão *realmente* no buffer atual
+                        const packetsInBuffer = packets.filter(p => 
+                            p.routeIndex === packet.routeIndex && 
+                            !p.inTransit // Apenas pacotes que não estão em trânsito (já chegaram ou estão aguardando)
+                        ).sort((a, b) => a.id - b.id);
                         
-                        if (bufferElement) {
-                            const packetElement = document.createElement('div');
-                            packetElement.className = 'packet';
-                            packetElement.id = `packet-${packet.id}`;
-                            packetElement.textContent = `1KB`;
-                            
-                            const colorHue = (packet.packageId * 30) % 360;
-                            packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
-                            
-                            const packetsInBuffer = packets.filter(p => 
-                                p.routeIndex === packet.routeIndex && 
-                                !p.inTransit
-                            ).sort((a, b) => a.id - b.id);
-                            
-                            const position = packetsInBuffer.indexOf(packet);
-                            
-                            if (position !== -1) {
-                                const top = 10 + position * 14;
-                                packetElement.style.top = `${top}px`;
-                                bufferElement.appendChild(packetElement);
-                            }
+                        const position = packetsInBuffer.indexOf(packet);
+                        
+                        if (position !== -1) {
+                            const top = 10 + position * 14;
+                            packetElement.style.top = `${top}px`;
+                            parentElement.appendChild(packetElement);
+                        } else if (packet.inTransit && route.indexOf(currentStageName) > 0 && route[route.indexOf(currentStageName) - 1].startsWith('link')) {
+                            // Se o pacote está em trânsito e o estágio anterior era um link, 
+                            // significa que ele está na borda de entrada do buffer.
+                            // Renderiza-o na posição 0 do buffer para indicar que está "chegando" ou sendo processado.
+                            packetElement.style.top = '10px'; 
+                            parentElement.appendChild(packetElement);
                         }
                     }
                 }
@@ -515,7 +558,7 @@
             if (!simulationRunning || simulationPaused) return;
             
             const allPacketsDelivered = packets.every(p => p.routeIndex >= route.length - 1);
-            if (allPacketsDelivered) {
+            if (allPacketsDelivered && packets.length > 0) { // Garante que há pacotes para entregar
                 stopSimulation();
                 return;
             }
@@ -534,7 +577,11 @@
             for (let i = packetsToProcess.length - 1; i >= 0; i--) {
                 const packet = packetsToProcess[i];
 
-                if (packet.routeIndex >= route.length - 1) { // Já chegou ao destino
+                if (packet.routeIndex >= route.length - 1) { // Já chegou ao destino (ou está no último buffer)
+                    // Se o pacote está no destinationB e não está mais sendo processado
+                    if (packet.routeIndex === route.length - 1 && !packet.isBeingProcessed) {
+                        packet.isBeingProcessed = true; // Marcar como totalmente processado para não ser movido novamente.
+                    }
                     continue;
                 }
 
@@ -544,7 +591,6 @@
                 // Lógica para Links
                 if (currentStageName.startsWith('link')) {
                     const linkNumber = currentStageName.charAt(4);
-                    // Usamos addDelayL1 (etc.) para verificar se o atraso está ativado
                     const addPropagationDelay = document.getElementById(`addDelayL${linkNumber}`).checked;
                     const propagationDelay = addPropagationDelay ? DEFAULT_PROPAGATION_DELAY_PER_LINK : 0;
 
@@ -554,43 +600,38 @@
                         if (simulationTime >= packet.arrivalTime) {
                             packet.routeIndex++;
                             packet.inTransit = false;
-                            packet.isBeingProcessed = false; // Liberar para o próximo ciclo
+                            packet.isBeingProcessed = false; // Liberar para o próximo ciclo, agora no buffer
                         }
                     } else if (!packet.isBeingProcessed && packet.routeIndex > 0) { 
-                        // Pacote acabou de entrar no link (ou já estava, mas não em trânsito e ainda não foi processado neste tick)
+                        // Pacote acabou de entrar no link, precisa iniciar a transmissão e propagação
                         // Calcular o tempo que o pacote levará para atravessar este link
                         let totalLinkTime = TIME_PER_1KB_TRANSMISSION + propagationDelay;
                         
-                        // Definir o tempo de chegada ao próximo estágio
-                        packet.arrivalTime = simulationTime + totalLinkTime;
-                        packet.inTransit = true;
+                        packet.propagationStart = simulationTime; // Marca o início da propagação
+                        packet.arrivalTime = simulationTime + totalLinkTime; // Tempo de chegada no próximo estágio
+                        packet.inTransit = true; // Pacote agora está em trânsito
                         packet.isBeingProcessed = true; // Marcar como em processamento para evitar que outro movimento o pegue
                     }
                 } 
                 // Lógica para Buffers (R, B, T)
                 else {
-                    const nextBufferCapacity = nextStageName.startsWith('link') ? Infinity : 20; // Links têm capacidade infinita, buffers 20 pacotes
+                    // Capacidade dos buffers
+                    const nextBufferCapacity = nextStageName.startsWith('link') ? Infinity : 20; 
                     const packetsInNextBuffer = packets.filter(p => p.routeIndex === route.indexOf(nextStageName) && !p.inTransit).length;
 
-                    // Se o pacote não está em trânsito e o próximo buffer tem espaço
+                    // Se o pacote não está em trânsito e o próximo estágio tem espaço
                     if (!packet.inTransit && packetsInNextBuffer < nextBufferCapacity) {
-                        // Movimento entre buffers é instantâneo na simulação
-                        // Se o pacote está em um buffer de transmissão (sourceT, nodeBT, nodeCT)
-                        if (currentStageName.endsWith('T')) {
-                            // Se o próximo estágio é um link, o pacote "entra" no link para começar a ser transmitido
-                            if (nextStageName.startsWith('link')) {
+                        // Se o pacote está em um buffer de transmissão (sourceT, nodeBT, nodeCT) e o próximo é um link
+                        if (currentStageName.endsWith('T') && nextStageName.startsWith('link')) {
+                            // Se o link de saída não estiver sendo usado por outro pacote no mesmo tick
+                            const linkOutgoing = packets.some(p => p.routeIndex === route.indexOf(nextStageName) && p.inTransit);
+                            if (!linkOutgoing) {
                                 packet.routeIndex++;
-                                packet.inTransit = false; // Ele entra no link, a lógica de inTransit será definida no link
+                                packet.inTransit = false; // Será definido como true quando entrar no link
                                 packet.isBeingProcessed = true; // Marcar como processado para não ser movido novamente neste tick
-                            } else {
-                                // Se o próximo não é um link (ex: nodeCT -> destinationR), o movimento é instantâneo
-                                packet.routeIndex++;
-                                packet.inTransit = false;
-                                packet.isBeingProcessed = true; // Marcar como processado
                             }
                         } else {
-                            // Se o pacote está em um buffer de recepção ou interno (sourceB, nodeBR, nodeBB, nodeCR, nodeCB)
-                            // O movimento para o próximo buffer (interno ou transmissão) é instantâneo
+                            // Movimento entre buffers (R -> B, B -> T, ou T -> R/B se não for link) é instantâneo na simulação
                             packet.routeIndex++;
                             packet.inTransit = false;
                             packet.isBeingProcessed = true; // Marcar como processado
@@ -598,6 +639,12 @@
                     }
                 }
             }
+            // Resetar o isBeingProcessed para false para o próximo tick, exceto para pacotes em trânsito no link
+            packets.forEach(p => {
+                if (!p.inTransit) {
+                    p.isBeingProcessed = false;
+                }
+            });
             renderPackets();
         }
         
@@ -613,12 +660,13 @@
             updateButtonStates();
             createPackets();
             
-            // Reajustar o `isBeingProcessed` para false em todos os pacotes no início
-            packets.forEach(p => p.isBeingProcessed = false);
-
             timerInterval = setInterval(() => {
                 if (!simulationPaused) {
                     const speedFactor = parseInt(simulationSpeed.value);
+                    // O valor 0.01 * (speedFactor / 5) determina o incremento do tempo simulado por cada tick de 10ms.
+                    // Se speedFactor for 5, simulationTime aumenta em 0.01 a cada 10ms (1 segundo simulado a cada segundo real).
+                    // Se speedFactor for 10, simulationTime aumenta em 0.02 a cada 10ms (2 segundos simulados a cada segundo real).
+                    // Se speedFactor for 1, simulationTime aumenta em 0.002 a cada 10ms (0.2 segundos simulados a cada segundo real).
                     simulationTime += 0.01 * (speedFactor / 5); 
                     timerDisplay.textContent = `TEMPO DECORRIDO: ${simulationTime.toFixed(2)}`;
                     
@@ -655,6 +703,10 @@
                 const existingPackets = buffer.querySelectorAll('.packet');
                 existingPackets.forEach(p => p.remove());
             });
+            Object.values(links).forEach(link => {
+                const existingPackets = link.querySelectorAll('.packet');
+                existingPackets.forEach(p => p.remove());
+            });
             packets = [];
             
             updateButtonStates();
@@ -669,9 +721,9 @@
             
             messageSize.disabled = simulationRunning;
             packetSize.disabled = simulationRunning;
-            addDelayL1.disabled = simulationRunning; // Usar o novo ID
-            addDelayL2.disabled = simulationRunning; // Usar o novo ID
-            addDelayL3.disabled = simulationRunning; // Usar o novo ID
+            addDelayL1.disabled = simulationRunning;
+            addDelayL2.disabled = simulationRunning;
+            addDelayL3.disabled = simulationRunning;
         }
         
         // Event listeners
