@@ -254,18 +254,18 @@
     
     <div class="controls">
         <div class="delay-controls">
-            <label>Atraso de Propagação:</label>
+            <label>Atraso de Propagação (segundos):</label>
             <div class="checkbox-container">
                 <input type="checkbox" id="delayL1">
-                <label for="delayL1">L1</label>
+                <label for="delayL1">L1 (1s)</label>
             </div>
             <div class="checkbox-container">
                 <input type="checkbox" id="delayL2">
-                <label for="delayL2">L2</label>
+                <label for="delayL2">L2 (1s)</label>
             </div>
             <div class="checkbox-container">
                 <input type="checkbox" id="delayL3">
-                <label for="delayL3">L3</label>
+                <label for="delayL3">L3 (1s)</label>
             </div>
         </div>
         
@@ -395,6 +395,7 @@
         let simulationPaused = false;
         let simulationTime = 0;
         let timerInterval;
+        let processInterval; // Intervalo para processar o movimento dos pacotes
         let packets = [];
         let packetQueue = [];
         let currentPacketId = 0;
@@ -416,10 +417,16 @@
             'destinationB'
         ];
         
-        // Velocidade base da simulação em ms (será ajustada pelo controle de velocidade)
-        const BASE_SPEED = 250; // 0.25s em tempo real
-        let animationSpeed = BASE_SPEED;
+        // Velocidade do link em KB/s
+        const LINK_SPEED_KB_PER_S = 4; // 4 KB por segundo
+        const KILOBYTE_PER_SECOND = 1; // Representa 1 KB/s para cálculo de tempo
+
+        // Tempo para transmitir 1KB em um link (em segundos)
+        const TIME_PER_1KB = 1 / LINK_SPEED_KB_PER_S; // 0.25 segundos por 1KB
         
+        // Atraso de propagação fixo para cada link (em segundos)
+        const PROPAGATION_DELAY_PER_LINK = 1; 
+
         // Função para criar pacotes
         function createPackets() {
             packets = [];
@@ -433,16 +440,18 @@
             const fullPackets = Math.floor(msgSize / pktSize);
             const remainderSize = msgSize % pktSize;
             
-            // Criando pacotes completos
+            // Criando pacotes completos (fragmentos de 1KB)
             for (let i = 0; i < fullPackets; i++) {
                 for (let j = 0; j < pktSize; j++) {
                     packets.push({
                         id: currentPacketId++,
                         size: 1, // 1KB por fragmento
-                        packageId: i,
-                        routeIndex: 0,
-                        position: packets.length,
-                        inTransit: false
+                        packageId: i, // ID do pacote original ao qual pertence
+                        routeIndex: 0, // Inicia no primeiro buffer (sourceB)
+                        inTransit: false,
+                        arrivalTime: 0, // Tempo em que o pacote pode sair do buffer atual
+                        propagationStart: 0, // Tempo em que o pacote começou a propagar pelo link
+                        isBeingProcessed: false // Flag para evitar processamento múltiplo
                     });
                 }
             }
@@ -453,16 +462,18 @@
                     packets.push({
                         id: currentPacketId++,
                         size: 1, // 1KB por fragmento
-                        packageId: fullPackets,
+                        packageId: fullPackets, // Último pacote (incompleto)
                         routeIndex: 0,
-                        position: packets.length,
-                        inTransit: false
+                        inTransit: false,
+                        arrivalTime: 0,
+                        propagationStart: 0,
+                        isBeingProcessed: false
                     });
                 }
             }
             
-            // Colocando todos os pacotes no buffer inicial
-            packetQueue = [...packets];
+            // Inicialmente, todos os pacotes estão no sourceB (primeiro buffer)
+            packets.forEach(p => p.routeIndex = route.indexOf('sourceB'));
             renderPackets();
         }
         
@@ -477,32 +488,36 @@
             // Renderizar pacotes em seus buffers atuais
             packets.forEach(packet => {
                 if (packet.routeIndex < route.length) {
-                    const currentBuffer = route[packet.routeIndex];
+                    const currentBufferName = route[packet.routeIndex];
                     
-                    // Se o pacote estiver em um link, não renderizamos
-                    if (!currentBuffer.startsWith('link')) {
-                        const bufferElement = buffers[currentBuffer];
+                    // Não renderizamos pacotes que estão "inTransit" em um link
+                    if (!currentBufferName.startsWith('link')) {
+                        const bufferElement = buffers[currentBufferName];
                         
-                        const packetElement = document.createElement('div');
-                        packetElement.className = 'packet';
-                        packetElement.id = `packet-${packet.id}`;
-                        packetElement.textContent = `1KB`;
-                        
-                        // Definir cor baseada no pacote pai
-                        const colorHue = (packet.packageId * 30) % 360;
-                        packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
-                        
-                        // Posicionar o pacote no buffer baseado na ordem
-                        const packetsInBuffer = packets.filter(p => 
-                            p.routeIndex === packet.routeIndex && 
-                            !p.inTransit
-                        );
-                        const position = packetsInBuffer.indexOf(packet);
-                        
-                        if (position !== -1) {
-                            const top = 10 + position * 14; // 14px = altura do pacote + margem
-                            packetElement.style.top = `${top}px`;
-                            bufferElement.appendChild(packetElement);
+                        // Verificar se o bufferElement existe antes de tentar adicionar pacotes
+                        if (bufferElement) {
+                            const packetElement = document.createElement('div');
+                            packetElement.className = 'packet';
+                            packetElement.id = `packet-${packet.id}`;
+                            packetElement.textContent = `1KB`;
+                            
+                            // Definir cor baseada no pacote pai
+                            const colorHue = (packet.packageId * 30) % 360;
+                            packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
+                            
+                            // Posicionar o pacote no buffer baseado na ordem
+                            const packetsInBuffer = packets.filter(p => 
+                                p.routeIndex === packet.routeIndex && 
+                                !p.inTransit
+                            ).sort((a, b) => a.id - b.id); // Garantir ordem consistente
+                            
+                            const position = packetsInBuffer.indexOf(packet);
+                            
+                            if (position !== -1) {
+                                const top = 10 + position * 14; // 14px = altura do pacote + margem
+                                packetElement.style.top = `${top}px`;
+                                bufferElement.appendChild(packetElement);
+                            }
                         }
                     }
                 }
@@ -520,82 +535,93 @@
                 return;
             }
             
-            // Processar o movimento dos pacotes por etapas
-            movePacketsThroughRoute();
-            
-            // Renderizar os pacotes após as movimentações
-            renderPackets();
-        }
-        
-        // Mover pacotes através da rota
-        function movePacketsThroughRoute() {
-            const bufferStatus = {};
-            
-            // Inicializar status dos buffers
-            route.forEach(buffer => {
-                bufferStatus[buffer] = {
-                    packetsInside: packets.filter(p => p.routeIndex === route.indexOf(buffer) && !p.inTransit).length,
-                    capacity: buffer.startsWith('link') ? Infinity : 20
-                };
-            });
-            
-            // Mover pacotes do fim para o início da rota (para evitar colisões)
-            for (let routeStep = route.length - 2; routeStep >= 0; routeStep--) {
-                const currentBuffer = route[routeStep];
-                const nextBuffer = route[routeStep + 1];
-                
-                // Se o buffer atual for um link, aplicamos o delay
-                if (currentBuffer.startsWith('link')) {
-                    const linkNumber = currentBuffer.charAt(4);
-                    const delayCheckbox = document[`delayL${linkNumber}`];
-                    const hasDelay = delayCheckbox && delayCheckbox.checked;
-                    
-                    // Apenas se movermos para o próximo buffer se não houver delay ou após o delay
-                    const packetsInLink = packets.filter(p => 
-                        p.routeIndex === routeStep && 
-                        (hasDelay ? p.delayPassed : true)
-                    );
-                    
-                    packetsInLink.forEach(packet => {
-                        if (!hasDelay || packet.delayPassed) {
-                            // Mover para o próximo buffer se houver espaço
-                            if (bufferStatus[nextBuffer].packetsInside < bufferStatus[nextBuffer].capacity) {
+            // A taxa de simulação controla a rapidez com que o tempo "real" passa
+            // e, consequentemente, a frequência com que os pacotes podem se mover.
+            // Quanto maior o `simulationSpeed.value`, mais rápido o tempo passa.
+            const speedFactor = parseInt(simulationSpeed.value);
+            const timeStep = 0.01 * (speedFactor / 5); // Ajustar o passo de tempo com a velocidade da simulação
+
+            // Mover pacotes do fim para o início da rota
+            for (let i = packets.length - 1; i >= 0; i--) {
+                const packet = packets[i];
+
+                if (packet.routeIndex >= route.length - 1) { // Já chegou ao destino
+                    continue;
+                }
+
+                const currentStageName = route[packet.routeIndex];
+                const nextStageName = route[packet.routeIndex + 1];
+
+                // --- Lógica para Links ---
+                if (currentStageName.startsWith('link')) {
+                    const linkNumber = currentStageName.charAt(4);
+                    const delayCheckbox = document.getElementById(`delayL${linkNumber}`);
+                    const hasPropagationDelay = delayCheckbox && delayCheckbox.checked;
+
+                    // Se o pacote está em trânsito no link
+                    if (packet.inTransit) {
+                        let totalLinkTime = TIME_PER_1KB; // Tempo de transmissão para 1KB
+                        if (hasPropagationDelay) {
+                            totalLinkTime += PROPAGATION_DELAY_PER_LINK; // Adiciona atraso de propagação
+                        }
+
+                        // Se o tempo atual da simulação for maior ou igual ao tempo de chegada esperado no próximo estágio
+                        if (simulationTime >= packet.arrivalTime) {
+                            packet.routeIndex++;
+                            packet.inTransit = false;
+                            packet.isBeingProcessed = false; // Liberar para o próximo ciclo
+                        }
+                    } else if (packet.routeIndex > 0) { // Pacote acabou de entrar no link (ou já estava, mas não em trânsito)
+                        // Calcular o tempo que o pacote levará para atravessar este link
+                        let timeToTraverseLink = TIME_PER_1KB; // Tempo de transmissão
+                        if (hasPropagationDelay) {
+                            timeToTraverseLink += PROPAGATION_DELAY_PER_LINK; // Adicionar atraso de propagação
+                        }
+                        
+                        // Definir o tempo de chegada ao próximo estágio
+                        packet.arrivalTime = simulationTime + timeToTraverseLink;
+                        packet.inTransit = true;
+                        packet.isBeingProcessed = true; // Marcar como em processamento para evitar que outro movimento o pegue
+                    }
+                } 
+                // --- Lógica para Buffers (R, B, T) ---
+                else {
+                    const currentBufferElement = buffers[currentStageName];
+                    const nextBufferElement = buffers[nextStageName];
+
+                    // Obter a capacidade do próximo buffer
+                    const nextBufferCapacity = nextStageName.startsWith('link') ? Infinity : 20; // Links têm capacidade infinita
+                    const packetsInNextBuffer = packets.filter(p => p.routeIndex === route.indexOf(nextStageName) && !p.inTransit).length;
+
+                    // Se o pacote não está em trânsito e o próximo buffer tem espaço
+                    if (!packet.inTransit && packetsInNextBuffer < nextBufferCapacity) {
+                        // Calcular o tempo necessário para processar e transmitir este pacote do buffer atual
+                        // Para simplificar, assumimos que o tempo de processamento em buffers é zero,
+                        // e o tempo de transmissão é contabilizado ao entrar no link.
+                        // O "movimento" entre buffers (sourceB -> sourceT) é instantâneo em termos de simulação.
+                        
+                        // Se o pacote está em um buffer de transmissão (sourceT, nodeBT, nodeCT)
+                        if (currentStageName.endsWith('T')) {
+                            // Se o próximo estágio é um link, o pacote "entra" no link para começar a ser transmitido
+                            if (nextStageName.startsWith('link')) {
+                                packet.routeIndex++;
+                                packet.inTransit = true; // Agora está em trânsito no link
+                                // O arrivalTime para o link será calculado quando ele entrar no link (acima)
+                            } else {
+                                // Se o próximo não é um link (ex: nodeCT -> destinationR), o movimento é instantâneo
                                 packet.routeIndex++;
                                 packet.inTransit = false;
-                                packet.delayPassed = false;
-                                bufferStatus[nextBuffer].packetsInside++;
                             }
                         } else {
-                            // Marcar o delay como passado para o próximo ciclo
-                            packet.delayPassed = true;
-                        }
-                    });
-                } else {
-                    // Para buffers normais
-                    const packetsInBuffer = packets.filter(p => 
-                        p.routeIndex === routeStep && 
-                        !p.inTransit
-                    );
-                    
-                    if (packetsInBuffer.length > 0 && bufferStatus[nextBuffer].packetsInside < bufferStatus[nextBuffer].capacity) {
-                        // Mover apenas o primeiro pacote do buffer atual
-                        const packetToMove = packetsInBuffer[0];
-                        packetToMove.routeIndex++;
-                        packetToMove.inTransit = true;
-                        
-                        // Se o próximo buffer for um link, aplicamos tempo de trânsito
-                        if (nextBuffer.startsWith('link')) {
-                            setTimeout(() => {
-                                packetToMove.inTransit = false;
-                                renderPackets();
-                            }, animationSpeed);
-                        } else {
-                            packetToMove.inTransit = false;
-                            bufferStatus[nextBuffer].packetsInside++;
+                            // Se o pacote está em um buffer de recepção ou interno (sourceB, nodeBR, nodeBB, nodeCR, nodeCB)
+                            // O movimento para o próximo buffer (interno ou transmissão) é instantâneo
+                            packet.routeIndex++;
+                            packet.inTransit = false;
                         }
                     }
                 }
             }
+            renderPackets();
         }
         
         // Iniciar a simulação
@@ -606,6 +632,7 @@
             simulationRunning = true;
             simulationPaused = false;
             simulationTime = 0;
+            timerDisplay.textContent = `TEMPO DECORRIDO: 0.00`;
             
             updateButtonStates();
             
@@ -615,13 +642,17 @@
             // Iniciar o timer
             timerInterval = setInterval(() => {
                 if (!simulationPaused) {
-                    simulationTime += 0.01;
+                    // Avançar o tempo da simulação em pequenos incrementos
+                    const speedFactor = parseInt(simulationSpeed.value);
+                    // Quanto maior o speedFactor, mais rápido o tempo "real" avança
+                    simulationTime += 0.01 * (speedFactor / 5); 
                     timerDisplay.textContent = `TEMPO DECORRIDO: ${simulationTime.toFixed(2)}`;
+                    
+                    // Chamar a função de processamento de movimento em cada tick do timer
+                    // para uma simulação mais contínua e baseada no tempo
+                    processPacketMovement();
                 }
-            }, 10);
-            
-            // Iniciar processamento de movimento dos pacotes
-            processInterval = setInterval(processPacketMovement, animationSpeed / 2);
+            }, 10); // Intervalo de 10ms para atualizar o timer e a lógica de movimento
         }
         
         // Pausar a simulação
@@ -645,9 +676,16 @@
             if (!simulationRunning) return;
             
             clearInterval(timerInterval);
-            clearInterval(processInterval);
             simulationRunning = false;
             simulationPaused = false;
+            
+            // Limpar todos os pacotes visuais
+            Object.values(buffers).forEach(buffer => {
+                const existingPackets = buffer.querySelectorAll('.packet');
+                existingPackets.forEach(p => p.remove());
+            });
+            packets = []; // Limpar a lista de pacotes
+            
             updateButtonStates();
         }
         
@@ -673,8 +711,10 @@
         stopBtn.addEventListener('click', stopSimulation);
         
         simulationSpeed.addEventListener('input', () => {
-            const speedFactor = parseInt(simulationSpeed.value);
-            animationSpeed = BASE_SPEED * (11 - speedFactor) / 5;
+            // A velocidade é agora aplicada ao `timeStep` dentro do `timerInterval`
+            // Não precisamos mais ajustar `animationSpeed` diretamente para a transição visual,
+            // pois a transição CSS já é linear (0.25s).
+            // A velocidade de simulação impactará a rapidez com que o tempo passa.
         });
         
         // Inicialização
