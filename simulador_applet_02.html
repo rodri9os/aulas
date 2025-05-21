@@ -115,7 +115,7 @@
         .buffer {
             width: 80%;
             height: 50px;
-            background-color: #ffee00;
+            background-color: #d3d3d3; /* Cor neutra para os buffers */
             border: 2px solid black;
             margin: 5px 0;
             position: relative;
@@ -168,22 +168,6 @@
             font-weight: bold;
             z-index: 3;
             transition: all 0.3s ease-in-out;
-        }
-        .legend {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-top: 40px;
-        }
-        .legend-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .legend-color {
-            width: 20px;
-            height: 20px;
-            border: 1px solid black;
         }
         .slider-container {
             display: flex;
@@ -287,21 +271,6 @@
                 </div>
                 <div class="link" id="link3">
                     <div class="link-label">L3</div>
-                </div>
-            </div>
-            
-            <div class="legend">
-                <div class="legend-item">
-                    <div class="legend-color" style="background-color: red;"></div>
-                    <span>R: buffer de recepção</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background-color: yellow;"></div>
-                    <span>B: buffer intermediário</span>
-                </div>
-                <div class="legend-item">
-                    <div class="legend-color" style="background-color: green;"></div>
-                    <span>T: buffer de transmissão</span>
                 </div>
             </div>
         </div>
@@ -565,16 +534,17 @@
                 simulation.startTime = Date.now();
                 simulation.timerInterval = setInterval(updateTimer, 10);
                 
-                // Iniciar animações
+                // Iniciar animações de cada pacote sequencialmente
                 const route = getPacketRoute();
-                
-                // Calcular duração base para cada movimento
                 const baseDuration = 2000 / simulation.speed;
-                
-                // Enviar pacotes um a um com um pequeno atraso entre eles
+
                 for (let i = 0; i < simulation.packets.length; i++) {
                     const packet = simulation.packets[i];
                     await animatePacket(packet, route, baseDuration);
+                    // Adicionar um pequeno atraso entre o envio de pacotes da origem
+                    if (i < simulation.packets.length - 1) {
+                        await new Promise(resolve => setTimeout(resolve, baseDuration / 4)); // Atraso entre pacotes
+                    }
                 }
                 
                 // Finalizar simulação quando todos os pacotes chegarem ao destino
@@ -611,12 +581,6 @@
                     if (currentStep === 'destinationB') {
                         packet.completed = true;
                     }
-                }
-                
-                // Verificar se todos os pacotes foram completados
-                const allCompleted = simulation.packets.every(p => p.completed);
-                if (allCompleted) {
-                    endSimulation();
                 }
             }
             
@@ -674,12 +638,15 @@
                 // Encerrar todas as animações em andamento
                 document.querySelectorAll('.packet').forEach(packet => {
                     packet.style.transition = 'none';
+                    packet.remove(); // Remove os pacotes da tela
                 });
+                simulation.packets = []; // Limpa a lista de pacotes
                 
                 startBtn.disabled = false;
                 pauseBtn.disabled = true;
                 resumeBtn.disabled = true;
                 stopBtn.disabled = true;
+                timerElement.textContent = `TEMPO DECORRIDO: 0.00`; // Resetar o timer
             }
             
             // Event listeners para os botões
