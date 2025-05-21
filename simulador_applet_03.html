@@ -187,7 +187,7 @@
             <div class="config-item">
                 <div class="config-row">
                     <label for="messageSize">Tamanho da Mensagem (Kbits):</label>
-                    <input type="number" id="messageSize" min="1" max="100" value="10">
+                    <input type="number" id="messageSize" min="1" max="100" value="12">
                 </div>
                 <div class="config-row">
                     <label for="packetSize">Tamanho do Pacote (Kbits):</label>
@@ -218,9 +218,9 @@
                     <label for="speed">Velocidade da Simulação:</label>
                 </div>
                 <div class="slider-container">
-                    <span>Slow</span>
+                    <span>Lento</span>
                     <input type="range" id="speed" min="1" max="10" value="5">
-                    <span>Fast</span>
+                    <span>Rápido</span>
                     <span class="slider-value" id="speedValue">5</span>
                 </div>
             </div>
@@ -316,8 +316,7 @@
                     'nodeCR': null, 'nodeCB': null, 'nodeCT': null,
                     'destinationR': null, 'destinationB': null,
                     'link1': null, 'link2': null, 'link3': null
-                },
-                packetInTransit: {} // Para rastrear pacotes que estão se movendo entre locais
+                }
             };
             
             // Posições dos buffers para animação
@@ -429,7 +428,7 @@
             }
             
             // Mover pacote para um buffer específico
-            function movePacketToLocation(packetId, targetLocationId, duration = 500) {
+            function movePacketToLocation(packetId, targetLocationId, logicalDurationMs) {
                 return new Promise(resolve => {
                     const packet = simulation.packets.find(p => p.id === packetId);
                     if (!packet || !packet.element) {
@@ -458,16 +457,26 @@
                     const left = targetPos.left + (targetPos.width - packet.element.offsetWidth) / 2;
                     const top = targetPos.top + (targetPos.height - packet.element.offsetHeight) / 2;
                     
-                    // Aplicar transição
-                    packet.element.style.transition = `all ${duration / 1000}s ease-in-out`;
+                    // Calcular duração visual baseada na velocidade da simulação.
+                    // Se a duração lógica for 0 (para movimentos de buffer), use uma constante pequena para efeito visual.
+                    let visualDurationMs = logicalDurationMs / simulation.speed;
+                    if (logicalDurationMs === 0) {
+                        visualDurationMs = 50 / simulation.speed; // Constante pequena para movimento visual
+                    }
+                    // Garantir que a duração visual nunca seja zero para uma animação suave
+                    if (visualDurationMs < 10) visualDurationMs = 10; // Duração visual mínima
+
+                    // Aplicar transição para movimento visual
+                    packet.element.style.transition = `all ${visualDurationMs / 1000}s ease-in-out`;
                     packet.element.style.left = `${left}px`;
                     packet.element.style.top = `${top}px`;
                     
                     packet.isMoving = true;
+                    // Resolver a promise após a duração lógica ter passado
                     setTimeout(() => {
                         packet.isMoving = false;
                         resolve();
-                    }, duration);
+                    }, logicalDurationMs); // Usar logicalDurationMs aqui
                 });
             }
             
@@ -485,15 +494,15 @@
             }
 
             // A lógica principal da simulação, executada em cada "tick"
-            async function simulationTick() {
+            function simulationTick() { // Não é mais async, apenas dispara os movimentos
                 if (!simulation.isRunning || simulation.isPaused) return;
 
                 const route = getPacketRoute();
-                // Duração para movimentos internos de buffer (ex: tempo de processamento)
-                const bufferMovementDuration = 1000 / simulation.speed; // 1 segundo dividido pelo valor do slider de velocidade
+                // Duração para movimentos internos de buffer (instantâneo logicamente)
+                const logicalBufferMovementMs = 0; // 0ms para ser irrelevante no tempo total
 
-                // Taxa de enlace efetiva baseada no slider de velocidade
-                const effectiveLinkSpeed = simulation.baseLinkSpeed * simulation.speed; // Escala a taxa de enlace com a velocidade da simulação
+                // Taxa de enlace base em Kbits/s
+                const baseLinkSpeed = simulation.baseLinkSpeed; // 4 Kb/s
 
                 for (let i = 0; i < simulation.packets.length; i++) {
                     const packet = simulation.packets[i];
@@ -509,10 +518,10 @@
                     if (packet.currentLocation === null) {
                         // Tentar mover para o primeiro buffer (sourceB)
                         if (simulation.occupancy['sourceB'] === null) {
-                            await movePacketToLocation(packet.id, 'sourceB', bufferMovementDuration);
+                            movePacketToLocation(packet.id, 'sourceB', logicalBufferMovementMs);
                             packet.currentRouteIndex++;
                         }
-                        continue; // Próximo pacote
+                        continue;
                     }
 
                     // Se o pacote chegou ao destino final (destinationB)
@@ -532,26 +541,28 @@
                         if (simulation.packets.every(p => p.completed)) {
                             endSimulation();
                         }
-                        continue; // Próximo pacote
+                        continue; 
                     }
 
                     // Lógica de movimento para a próxima etapa
                     // Verificar se o próximo local está livre
                     if (simulation.occupancy[nextTargetLocation] === null) {
-                        let duration;
+                        let logicalDurationMs;
                         // Se o próximo local é um link, calcule o tempo de transmissão + delay de propagação
                         if (nextTargetLocation.startsWith('link')) {
-                            const transmissionTimeMs = (packet.size / effectiveLinkSpeed) * 1000; // Converter para milissegundos
+                            const logicalTransmissionTimeSeconds = packet.size / baseLinkSpeed; // Tempo para transmitir o pacote no link
+                            logicalDurationMs = logicalTransmissionTimeSeconds * 1000; // Converter para milissegundos
+
                             let propagationDelayMs = 0;
                             if (nextTargetLocation === 'link1' && delayL1Checkbox.checked) propagationDelayMs = 500;
                             if (nextTargetLocation === 'link2' && delayL2Checkbox.checked) propagationDelayMs = 500;
                             if (nextTargetLocation === 'link3' && delayL3Checkbox.checked) propagationDelayMs = 500;
-                            duration = transmissionTimeMs + propagationDelayMs;
-                        } else { // Se é um buffer
-                            duration = bufferMovementDuration;
+                            logicalDurationMs += propagationDelayMs;
+                        } else { // Se é um buffer (processamento interno do nó)
+                            logicalDurationMs = logicalBufferMovementMs;
                         }
                         
-                        await movePacketToLocation(packet.id, nextTargetLocation, duration);
+                        movePacketToLocation(packet.id, nextTargetLocation, logicalDurationMs);
                         packet.currentRouteIndex++;
                     }
                 }
@@ -569,8 +580,7 @@
                 simulation.animations = [];
                 // Limpa todas as ocupações
                 Object.keys(simulation.occupancy).forEach(key => simulation.occupancy[key] = null);
-                simulation.packetInTransit = {};
-
+                
                 // Obter posições dos buffers
                 initBufferPositions();
                 
@@ -590,8 +600,8 @@
 
                 // Iniciar o loop principal da simulação
                 // Usamos setInterval para controlar o "tick" da simulação
-                // Ajuste o intervalo para controlar a frequência de verificação de movimento
-                simulation.mainLoopInterval = setInterval(simulationTick, 100); // A cada 100ms, tenta mover os pacotes
+                // A cada 10ms, tenta mover os pacotes que estão prontos
+                simulation.mainLoopInterval = setInterval(simulationTick, 10); 
             }
             
             // Atualiza o timer na interface
@@ -623,7 +633,7 @@
                 simulation.startTime = Date.now() - (simulation.elapsedTime * 1000);
                 pauseBtn.disabled = false;
                 resumeBtn.disabled = true;
-                simulation.mainLoopInterval = setInterval(simulationTick, 100); // Retoma o loop principal
+                simulation.mainLoopInterval = setInterval(simulationTick, 10); // Retoma o loop principal
             }
             
             // Encerrar a simulação
@@ -658,7 +668,6 @@
                 simulation.packets = []; // Limpa a lista de pacotes
                 // Limpa todas as ocupações
                 Object.keys(simulation.occupancy).forEach(key => simulation.occupancy[key] = null); 
-                simulation.packetInTransit = {}; // Limpa o rastreamento de trânsito
                 
                 startBtn.disabled = false;
                 pauseBtn.disabled = true;
