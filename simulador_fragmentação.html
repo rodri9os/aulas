@@ -455,7 +455,9 @@
                         // Quando este fragmento terminará a propagação no link
                         propagationCompleteTime: 0,
                         // Indica se este fragmento já foi considerado para a transmissão do pacote lógico no link
-                        hasStartedLogicalTransmission: false
+                        hasStartedLogicalTransmission: false,
+                        // O tempo em que o pacote lógico ao qual este fragmento pertence *começou* a transmitir no link
+                        logicalPacketTransmissionStartLinkTime: {} // Guarda {linkName: time}
                     });
                 }
             }
@@ -489,14 +491,24 @@
                 if (currentStageName.startsWith('link')) {
                     const linkElement = document.getElementById(currentStageName);
                     if (linkElement) {
-                        // Calcula a posição no link com base no progresso da propagação
-                        const timeInLink = simulationTime - (packet.propagationCompleteTime - (PROPAGATION_DELAY || 0)); // Aproximação do tempo de início no link
-                        const totalTimeInLink = (parseInt(packetSizeSelect.value) * TRANSMISSION_TIME_PER_KB_FRAGMENT) + (delayL1Checkbox.checked && currentStageName === 'link1' || delayL2Checkbox.checked && currentStageName === 'link2' || delayL3Checkbox.checked && currentStageName === 'link3' ? PROPAGATION_DELAY : 0);
+                        const linkNumber = currentStageName.charAt(4);
+                        const hasPropagationDelay = (delayL1Checkbox.checked && linkNumber === '1') ||
+                                                    (delayL2Checkbox.checked && linkNumber === '2') ||
+                                                    (delayL3Checkbox.checked && linkNumber === '3');
+                        const propagationDelay = hasPropagationDelay ? PROPAGATION_DELAY : 0;
+
+                        const pktSizeKB = parseInt(packetSizeSelect.value);
+                        const transmissionTimeForFullPacket = pktSizeKB * TRANSMISSION_TIME_PER_KB_FRAGMENT; // Ex: 1s for 4KB
                         
+                        // Tempo total que o pacote lógico passa no link (transmissão + propagação)
+                        const totalTimeInLink = transmissionTimeForFullPacket + propagationDelay;
+                        
+                        // O tempo de início da transmissão deste pacote lógico no link
+                        const linkStartTime = packet.logicalPacketTransmissionStartLinkTime[currentStageName] || 0;
+
                         let progress = 0;
                         if (totalTimeInLink > 0) {
-                             // A animação do fragmento dentro do link deve durar o tempo que o pacote leva para atravessar (transmissão + propagação)
-                            progress = Math.min(1, timeInLink / totalTimeInLink);
+                            progress = Math.min(1, (simulationTime - linkStartTime) / totalTimeInLink);
                         }
                         
                         const linkWidth = linkElement.offsetWidth;
@@ -536,13 +548,11 @@
                 const currentStageName = route[i];
                 const nextStageName = route[i + 1];
         
-                // Pega os pacotes que estão no estágio atual e prontos para se mover
+                // Pega os fragmentos que estão no estágio atual
                 const fragmentsInCurrentStage = packets.filter(p => p.routeIndex === i).sort((a, b) => a.id - b.id);
         
                 if (currentStageName.startsWith('link')) {
                     // Um fragmento está em um link, verificamos se terminou a propagação
-                    const linkNumber = currentStageName.charAt(4);
-                    
                     fragmentsInCurrentStage.forEach(fragment => {
                         if (simulationTime >= fragment.propagationCompleteTime) {
                             const nextBufferElement = buffers[nextStageName];
@@ -557,48 +567,44 @@
                         }
                     });
         
-                    // Se todos os fragmentos do pacote lógico que estava no link saíram, libera o lock do link
-                    // Apenas se o link estava de fato com um pacote lógico bloqueando-o
+                    // Lógica para liberar o "lock" do link (pacote completo)
                     const linkLock = linkTransmissionLocks[currentStageName];
                     if (linkLock.currentLogicalPacketId !== null) {
-                        const fragmentsOfLockedPacket = packets.filter(p => 
-                            p.logicalPacketId === linkLock.currentLogicalPacketId && p.routeIndex === (i + 1) // Ver se já está no próximo estágio
+                        const fragmentsOfLockedPacketInNextStage = packets.filter(p => 
+                            p.logicalPacketId === linkLock.currentLogicalPacketId && p.routeIndex === (i + 1)
                         );
-                        // Se todos os fragmentos do pacote lógico que ocupou o link já se moveram para o próximo estágio
-                        // E o número de fragmentos no próximo estágio corresponde ao tamanho do pacote lógico
+                        
                         const pktSizeKB = parseInt(packetSizeSelect.value);
                         const totalKBsInMessage = parseInt(messageSizeSelect.value);
                         const expectedFragmentsForLockedPacket = Math.min(pktSizeKB, totalKBsInMessage - (linkLock.currentLogicalPacketId * pktSizeKB));
 
-                        if (fragmentsOfLockedPacket.length === expectedFragmentsForLockedPacket) {
-                             // Desbloqueia o link para o próximo pacote lógico
-                            linkLock.currentLogicalPacketId = null;
+                        // O link só é liberado quando *todos* os fragmentos do pacote lógico transmitido
+                        // já foram movidos para o próximo buffer
+                        if (fragmentsOfLockedPacketInNextStage.length === expectedFragmentsForLockedPacket) {
+                             linkLock.currentLogicalPacketId = null; // Libera o link
                         }
                     }
         
                 } else { // O estágio atual é um buffer (sourceB, sourceT, nodeBR, etc.)
                     const nextStageIsLink = nextStageName.startsWith('link');
-                    const nextBufferElement = buffers[nextStageName];
-                    const packetsInNextBuffer = packets.filter(p => p.routeIndex === (i + 1) && !p.inTransit).length;
-                    const nextBufferCapacity = nextStageIsLink ? Infinity : 20; // Links não têm capacidade finita de "fila" interna
-                    
                     const fragmentsInCurrentBuffer = packets.filter(p => p.routeIndex === i && !p.inTransit);
                     
                     if (nextStageIsLink && currentStageName.endsWith('T')) { // Se for um buffer de transmissão (SourceT, NodeBT, NodeCT)
                         const linkNumber = nextStageName.charAt(4);
                         const linkLock = linkTransmissionLocks[nextStageName];
-                        const pktSizeKB = parseInt(packetSizeSelect.value); // Tamanho do pacote lógico
+                        const pktSizeKB = parseInt(packetSizeSelect.value); // Tamanho do pacote lógico (ex: 4KB)
                         
-                        // Verifica se o link está livre para INICIAR a transmissão de um novo pacote lógico
-                        if (simulationTime >= linkLock.freeAt) {
+                        // Verifica se o link está livre para INICIAR a transmissão de um novo pacote lógico E
+                        // se não há um pacote lógico atualmente bloqueando o link (aguardando transmissão ou propagação)
+                        if (simulationTime >= linkLock.freeAt && linkLock.currentLogicalPacketId === null) {
                             let nextLogicalPacketIdToTransmit = -1;
                             if (fragmentsInCurrentBuffer.length > 0) {
                                 // Pega o logicalPacketId do primeiro fragmento no buffer que ainda não foi transmitido
                                 nextLogicalPacketIdToTransmit = fragmentsInCurrentBuffer[0].logicalPacketId;
                             }
         
-                            if (nextLogicalPacketIdToTransmit !== -1 && linkLock.currentLogicalPacketId === null) {
-                                // Pega todos os fragmentos pertencentes a este pacote lógico que estão neste buffer
+                            if (nextLogicalPacketIdToTransmit !== -1) {
+                                // Pega todos os fragmentos pertencentes a este pacote lógico que estão neste buffer e ainda não foram marcados para transmissão
                                 const fragmentsForThisLogicalPacket = packets.filter(p => 
                                     p.logicalPacketId === nextLogicalPacketIdToTransmit && 
                                     p.routeIndex === i && 
@@ -609,7 +615,7 @@
                                 const totalKBsInMessage = parseInt(messageSizeSelect.value);
                                 const expectedFragmentsForThisLogicalPacket = Math.min(pktSizeKB, totalKBsInMessage - (nextLogicalPacketIdToTransmit * pktSizeKB));
         
-                                // Se temos todos os fragmentos necessários para este pacote lógico ou se é o último pacote e temos todos os restantes
+                                // Se temos todos os fragmentos necessários para este pacote lógico
                                 if (fragmentsForThisLogicalPacket.length === expectedFragmentsForThisLogicalPacket) {
                                     // Calcula o tempo que o pacote completo de 4KB (ou o tamanho lógico) levará para ser transmitido pelo link
                                     const transmissionTimeForFullPacket = pktSizeKB * TRANSMISSION_TIME_PER_KB_FRAGMENT; // Ex: 4KB * 0.25s/KB = 1s
@@ -627,17 +633,19 @@
                                     fragmentsForThisLogicalPacket.forEach(fragment => {
                                         fragment.routeIndex++; // Move o fragmento para o link
                                         fragment.inTransit = true; // Marca como em trânsito no link
-                                        // O tempo de término da propagação do fragmento é o tempo de início do PACOTE LÓGICO + o tempo de transmissão do PACOTE LÓGICO + o tempo de propagação do LINK
+                                        // O tempo de término da propagação do fragmento é o tempo de início da simulação + o tempo de transmissão do PACOTE LÓGICO + o tempo de propagação do LINK
                                         fragment.propagationCompleteTime = simulationTime + transmissionTimeForFullPacket + propagationTimeForThisLink;
                                         fragment.hasStartedLogicalTransmission = true; // Marca que este fragmento já foi considerado para transmissão do pacote
+                                        fragment.logicalPacketTransmissionStartLinkTime[nextStageName] = simulationTime; // Guarda o tempo de início no link para a animação
                                         movedSomethingInThisTick = true;
                                     });
                                 }
                             }
                         }
                     } else { // Movimentação entre buffers (B, R, T) ou para o destino
-                        // Move fragmentos um a um se o próximo buffer tiver espaço e o fragmento estiver pronto
+                        const nextBufferElement = buffers[nextStageName];
                         const packetsInNextBufferCount = packets.filter(p => p.routeIndex === (i + 1) && !p.inTransit).length;
+                        const nextBufferCapacity = 20; 
                         
                         if (fragmentsInCurrentBuffer.length > 0 && packetsInNextBufferCount < nextBufferCapacity) {
                             const fragmentToMove = fragmentsInCurrentBuffer[0];
