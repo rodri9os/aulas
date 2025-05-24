@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Simulador de Fragmentação de Pacotes</title>
     <style>
+        /* Estilos CSS existentes */
         body {
             font-family: Arial, sans-serif;
             max-width: 950px;
@@ -366,7 +367,7 @@
         // Elementos da interface
         const messageSize = document.getElementById('messageSize');
         const packetSize = document.getElementById('packetSize');
-        const simulationSpeedControl = document.getElementById('simulationSpeed'); // Renomeado para evitar conflito
+        const simulationSpeedControl = document.getElementById('simulationSpeed');
         const delayL1 = document.getElementById('delayL1');
         const delayL2 = document.getElementById('delayL2');
         const delayL3 = document.getElementById('delayL3');
@@ -393,346 +394,344 @@
         // Variáveis de controle da simulação
         let simulationRunning = false;
         let simulationPaused = false;
-        let calculatedTime = 0; // Tempo calculado real
-        let displayTime = 0; // Tempo para a animação
-        let timerInterval;
-        let animationInterval;
-        let packets = []; // Todos os fragmentos criados
-        let activePackets = []; // Fragmentos atualmente na rede/buffers
-        let currentPacketId = 0;
+        let simulationTime = 0; // Tempo real da simulação em segundos
+        let animationFrameId; // Para requestAnimationFrame
+        let lastTimestamp = 0; // Para calcular o delta time
         
-        // Constantes de tempo e tamanho
-        const LINK_CAPACITY = 4; // KB/s
-        const FRAGMENT_SIZE = 1; // KB por fragmento
-        const TRANSMISSION_DELAY_PER_KB = 1 / LINK_CAPACITY; // Tempo para transmitir 1KB (0.25s)
-        const PROPAGATION_DELAY_PER_LINK = 1; // 1 segundo por link se selecionado
+        let logicalPackets = []; // Armazena os pacotes lógicos (agrupamentos de fragmentos)
+        let currentFragmentId = 0; // ID para cada fragmento de 1KB
         
-        // Rota para os pacotes
+        // Rota para os pacotes (inclui links para rastreamento de posição)
         const route = [
-            'sourceB', // Buffer interno source
-            'sourceT', // Buffer de transmissão source
-            'link1',   // Link 1
-            'nodeBR',  // Buffer de recepção nó B
-            'nodeBB',  // Buffer interno nó B
-            'nodeBT',  // Buffer de transmissão nó B
-            'link2',   // Link 2
-            'nodeCR',  // Buffer de recepção nó C
-            'nodeCB',  // Buffer interno nó C
-            'nodeCT',  // Buffer de transmissão nó C
-            'link3',   // Link 3
-            'destinationR', // Buffer de recepção destino
-            'destinationB'  // Buffer interno destino (chegada final)
+            'sourceB',
+            'sourceT',
+            'link1',
+            'nodeBR',
+            'nodeBB',
+            'nodeBT',
+            'link2',
+            'nodeCR',
+            'nodeCB',
+            'nodeCT',
+            'link3',
+            'destinationR',
+            'destinationB'
         ];
         
-        // Armazenar o estado dos buffers para o cálculo do tempo
-        const bufferStates = {};
+        // Constantes de tempo
+        const KB_PER_SECOND = 4; // Capacidade do link em KB/s
+        const TIME_PER_1KB_FRAGMENT = 1 / KB_PER_SECOND; // Tempo para 1KB fragmento passar por um link (0.25s)
+        const PROPAGATION_DELAY = 1; // Atraso de propagação por link em segundos (quando selecionado)
         
-        // Inicializar os estados dos buffers
-        function initializeBufferStates() {
-            route.forEach(step => {
-                if (!step.startsWith('link')) {
-                    bufferStates[step] = {
-                        queue: [], // Fragmentos no buffer
-                        maxSize: 20 // Capacidade de exemplo para buffers (20 fragmentos)
-                    };
-                } else {
-                    bufferStates[step] = {
-                        inTransit: [], // Fragmentos em trânsito no link
-                        propagationTime: 0 // Tempo de propagação para este link
-                    };
-                }
-            });
-        }
+        let animationSpeedFactor = 1; // Fator para controlar a velocidade da animação (visual)
         
-        // Função para criar pacotes (fragmentos de 1KB)
-        function createPackets() {
-            packets = [];
-            activePackets = [];
-            currentPacketId = 0;
-            initializeBufferStates();
-        
+        // Variáveis para controlar o pipeline e ocupação de links/buffers
+        let linkOccupancyTime = { // Tempo em que o link estará livre para a PRÓXIMA transmissão
+            'link1': 0,
+            'link2': 0,
+            'link3': 0
+        };
+    
+        let bufferOccupancyTime = { // Tempo em que o buffer de transmissão estará livre para a PRÓXIMA transmissão
+            'sourceT': 0,
+            'nodeBT': 0,
+            'nodeCT': 0
+        };
+    
+        /**
+         * Cria os pacotes lógicos (agrupamentos de fragmentos de 1KB)
+         * com base nas configurações de tamanho da mensagem e do pacote.
+         * Reinicia o estado de ocupação de links e buffers.
+         */
+        function createLogicalPackets() {
+            logicalPackets = [];
+            currentFragmentId = 0;
+            
             const msgSize = parseInt(messageSize.value);
             const pktSize = parseInt(packetSize.value);
             
-            const numFullPackets = Math.floor(msgSize / pktSize);
-            const remainderFragments = msgSize % pktSize;
+            // Resetar ocupação de links e buffers para uma nova simulação
+            linkOccupancyTime = { 'link1': 0, 'link2': 0, 'link3': 0 };
+            bufferOccupancyTime = { 'sourceT': 0, 'nodeBT': 0, 'nodeCT': 0 };
+    
+            // Calcula o número de pacotes lógicos e o tamanho do último pacote (se fragmentado)
+            const numLogicalPackets = Math.ceil(msgSize / pktSize);
             
-            let currentPackageId = 0;
-        
-            for (let i = 0; i < numFullPackets; i++) {
-                for (let j = 0; j < pktSize; j++) {
-                    const fragment = {
-                        id: currentPacketId++,
-                        packageId: currentPackageId, // ID único para o pacote "pai"
-                        size: FRAGMENT_SIZE, // Sempre 1KB
-                        currentRouteIndex: 0,
-                        arrivalTime: 0, // Tempo de chegada no buffer/link
-                        departureTime: 0, // Tempo de saída do buffer/link
-                        transmissionComplete: false,
-                        propagationComplete: false,
-                        element: null // Referência ao elemento visual
-                    };
-                    packets.push(fragment);
-                    bufferStates['sourceB'].queue.push(fragment); // Coloca no buffer de origem
+            for (let i = 0; i < numLogicalPackets; i++) {
+                const currentLogicalPacketSize = (i === numLogicalPackets - 1 && msgSize % pktSize !== 0) 
+                                                ? (msgSize % pktSize) 
+                                                : pktSize;
+                const fragments = [];
+                for (let j = 0; j < currentLogicalPacketSize; j++) {
+                    fragments.push({
+                        id: currentFragmentId++, // ID único para cada fragmento de 1KB
+                        size: 1 // Sempre 1KB
+                    });
                 }
-                currentPackageId++;
+    
+                logicalPackets.push({
+                    id: i, // ID para o pacote lógico (ex: 0, 1, 2, 3 para 16KB/4KB)
+                    fragments: fragments, // Array de fragmentos de 1KB
+                    totalSizeKB: currentLogicalPacketSize, // Tamanho total deste pacote lógico (ex: 4KB ou o resto)
+                    currentLocation: 'sourceB', // Localização atual deste pacote lógico
+                    currentStageStartTime: 0, // Tempo de simulação que este pacote lógico entrou na localização atual
+                    expectedExitTime: 0, // Tempo de simulação que este pacote lógico é esperado para sair da localização atual
+                    arrivalTime: null // Tempo que este pacote lógico (todos os seus fragmentos) chegou ao destino final
+                });
             }
-        
-            if (remainderFragments > 0) {
-                for (let j = 0; j < remainderFragments; j++) {
-                    const fragment = {
-                        id: currentPacketId++,
-                        packageId: currentPackageId,
-                        size: FRAGMENT_SIZE,
-                        currentRouteIndex: 0,
-                        arrivalTime: 0,
-                        departureTime: 0,
-                        transmissionComplete: false,
-                        propagationComplete: false,
-                        element: null
-                    };
-                    packets.push(fragment);
-                    bufferStates['sourceB'].queue.push(fragment);
-                }
-            }
-            renderPackets();
+            
+            // Inicializa o tempo de saída para todos os pacotes em sourceB como 0
+            logicalPackets.forEach(lp => {
+                lp.currentStageStartTime = 0;
+                lp.expectedExitTime = 0; // Pacotes em sourceB estão prontos para se mover imediatamente
+            });
+            
+            renderPacketsVisuals();
         }
         
-        // Renderizar os pacotes nos buffers
-        function renderPackets() {
-            // Limpar todos os buffers visuais
-            Object.values(buffers).forEach(buffer => {
-                const existingPackets = buffer.querySelectorAll('.packet');
-                existingPackets.forEach(p => p.remove());
-            });
-        
-            // Renderizar pacotes em seus buffers atuais
-            Object.keys(bufferStates).forEach(bufferName => {
-                if (!bufferName.startsWith('link')) {
-                    const bufferElement = buffers[bufferName];
-                    if (bufferElement) {
-                        bufferStates[bufferName].queue.forEach((packet, index) => {
-                            let packetElement = packet.element;
-                            if (!packetElement) {
-                                packetElement = document.createElement('div');
-                                packetElement.className = 'packet';
-                                packetElement.id = `packet-${packet.id}`;
-                                packetElement.textContent = `${packet.size}KB`;
-                                const colorHue = (packet.packageId * 30) % 360;
-                                packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
-                                packet.element = packetElement;
+        /**
+         * Renderiza visualmente os pacotes (fragmentos de 1KB) em seus respectivos buffers e links.
+         * Esta função é puramente visual e não afeta a lógica de tempo da simulação.
+         */
+        function renderPacketsVisuals() {
+            // Limpa todos os elementos de pacotes existentes
+            document.querySelectorAll('.packet').forEach(p => p.remove());
+            
+            logicalPackets.forEach(lp => {
+                // Não renderiza pacotes lógicos que já chegaram ao destino
+                if (lp.arrivalTime !== null) return;
+    
+                lp.fragments.forEach((fragment, index) => {
+                    const packetElement = document.createElement('div');
+                    packetElement.className = 'packet';
+                    packetElement.id = `packet-${fragment.id}`;
+                    packetElement.textContent = `1KB`;
+                    
+                    // Define a cor baseada no ID do pacote lógico (para agrupar fragmentos visualmente)
+                    const colorHue = (lp.id * 30) % 360;
+                    packetElement.style.backgroundColor = `hsl(${colorHue}, 100%, 70%)`;
+                    
+                    if (lp.currentLocation.startsWith('link')) {
+                        const linkElement = document.getElementById(lp.currentLocation);
+                        if (linkElement) {
+                            const linkWidth = linkElement.offsetWidth;
+                            
+                            // Calcula o progresso visual do pacote lógico no link
+                            const transmissionTime = lp.totalSizeKB * TIME_PER_1KB_FRAGMENT; // Tempo para transmitir o pacote lógico
+                            const propDelay = (delayL1.checked && lp.currentLocation === 'link1' ||
+                                               delayL2.checked && lp.currentLocation === 'link2' ||
+                                               delayL3.checked && lp.currentLocation === 'link3') ? PROPAGATION_DELAY : 0;
+                            const totalLinkDuration = transmissionTime + propDelay;
+            
+                            const timeInLink = simulationTime - lp.currentStageStartTime;
+                            let visualProgress = 0;
+                            if (totalLinkDuration > 0) {
+                                visualProgress = Math.min(1, Math.max(0, timeInLink / totalLinkDuration));
                             }
                             
-                            // Posicionar o pacote no buffer baseado na ordem
-                            const top = 10 + index * 14; // 14px = altura do pacote + margem
-                            packetElement.style.top = `${top}px`;
-                            bufferElement.appendChild(packetElement);
-                        });
+                            // Posiciona o fragmento dentro do link
+                            const fragmentOffset = (index / lp.fragments.length) * (packetElement.offsetWidth); // Espaçamento entre fragmentos
+                            const leftPosition = visualProgress * linkWidth - (packetElement.offsetWidth / 2) + fragmentOffset;
+                            packetElement.style.left = `${leftPosition}px`;
+                            packetElement.style.top = `0px`; // Centraliza verticalmente no link
+                            packetElement.style.transform = `translateY(-50%)`;
+                            linkElement.appendChild(packetElement);
+                        }
+                    } else {
+                        const bufferElement = buffers[lp.currentLocation];
+                        if (bufferElement) {
+                            // Posiciona os fragmentos nos buffers com base na ordem de chegada lógica do pacote
+                            const logicalPacketsInThisBuffer = logicalPackets.filter(p => 
+                                p.currentLocation === lp.currentLocation && p.arrivalTime === null
+                            ).sort((a, b) => a.id - b.id); // Ordenar por ID do pacote lógico para manter a ordem
+            
+                            const lpPositionIndex = logicalPacketsInThisBuffer.indexOf(lp);
+                            if (lpPositionIndex !== -1) {
+                                // Calcula a posição vertical para cada fragmento dentro do pacote lógico
+                                const baseTop = 10 + lpPositionIndex * 14; // Base para o pacote lógico
+                                const fragmentTop = baseTop + (index * 2); // Pequeno offset para cada fragmento
+                                packetElement.style.top = `${fragmentTop}px`;
+                                bufferElement.appendChild(packetElement);
+                            }
+                        }
                     }
-                }
+                });
             });
         }
         
-        // Simular o tempo e mover os pacotes
-        function simulateNetworkStep() {
-            if (!simulationRunning || simulationPaused) return;
+        /**
+         * Função principal de atualização da simulação.
+         * Chamada a cada frame de animação para avançar o tempo lógico e mover os pacotes lógicos.
+         */
+        function updateSimulation(timestamp) {
+            if (!simulationRunning || simulationPaused) {
+                animationFrameId = requestAnimationFrame(updateSimulation);
+                return;
+            }
         
-            const link1Delay = delayL1.checked ? PROPAGATION_DELAY_PER_LINK : 0;
-            const link2Delay = delayL2.checked ? PROPAGATION_DELAY_PER_LINK : 0;
-            const link3Delay = delayL3.checked ? PROPAGATION_DELAY_PER_LINK : 0;
+            if (!lastTimestamp) lastTimestamp = timestamp;
+            // Calcula o delta de tempo (tempo real passado) e o ajusta pela velocidade da simulação
+            const deltaTime = (timestamp - lastTimestamp) / 1000 * animationSpeedFactor; 
+            lastTimestamp = timestamp;
         
-            // Atualizar o tempo da simulação (incremento mínimo para cálculos)
-            const deltaTime = 0.01; // 10ms
-            calculatedTime += deltaTime;
-            displayTime += deltaTime; // Para manter o display atualizado suavemente
-            timerDisplay.textContent = `TEMPO DECORRIDO: ${calculatedTime.toFixed(2)}`;
+            simulationTime += deltaTime; // O tempo de simulação avança continuamente
+            timerDisplay.textContent = `TEMPO DECORRIDO: ${simulationTime.toFixed(2)}`;
         
-            // Lógica de movimentação (do destino para a origem para evitar duplicação)
-            for (let i = route.length - 2; i >= 0; i--) {
-                const currentStep = route[i];
-                const nextStep = route[i + 1];
+            // Itera sobre os pacotes lógicos do fim para o início da rota.
+            // Isso ajuda a evitar que um pacote se mova múltiplas etapas em um único tick,
+            // garantindo que as condições de ocupação de recursos sejam respeitadas.
+            for (let i = logicalPackets.length - 1; i >= 0; i--) {
+                const lp = logicalPackets[i];
+                if (lp.arrivalTime !== null) continue; // Pacote já chegou ao destino, não precisa mais ser processado
         
-                if (currentStep.startsWith('link')) {
-                    // Mover pacotes que terminaram a propagação no link
-                    const linkState = bufferStates[currentStep];
-                    let packetsToMove = [];
-                    linkState.inTransit.forEach(packet => {
-                        const propagationTime = (currentStep === 'link1' ? link1Delay :
-                                                currentStep === 'link2' ? link2Delay :
-                                                currentStep === 'link3' ? link3Delay : 0);
-                        if (calculatedTime >= packet.arrivalTime + propagationTime) {
-                            packetsToMove.push(packet);
+                const currentRouteIndex = route.indexOf(lp.currentLocation);
+                const nextRouteIndex = currentRouteIndex + 1;
+                
+                // Se o pacote já está na última etapa da rota, marca o tempo de chegada
+                if (nextRouteIndex >= route.length) {
+                    if (lp.currentLocation === 'destinationB' && lp.arrivalTime === null) {
+                        lp.arrivalTime = simulationTime; 
+                    }
+                    continue;
+                }
+        
+                const nextLocation = route[nextRouteIndex];
+        
+                // Condição para mover: o tempo de simulação atual deve ser maior ou igual ao tempo de saída esperado do pacote
+                // E o recurso de destino deve estar livre
+                if (simulationTime >= lp.expectedExitTime) {
+                    // Cenário 1: Movendo de um buffer de transmissão (T) para um link
+                    if (lp.currentLocation.endsWith('T') && nextLocation.startsWith('link')) {
+                        const linkId = nextLocation;
+                        const transmissionTime = lp.totalSizeKB * TIME_PER_1KB_FRAGMENT; // Tempo para transmitir o pacote lógico
+                        const propDelay = (delayL1.checked && linkId === 'link1' ||
+                                           delayL2.checked && linkId === 'link2' ||
+                                           delayL3.checked && linkId === 'link3') ? PROPAGATION_DELAY : 0;
+                        
+                        // Lógica de Pipeline: O link e o buffer de transmissão só podem ser ocupados
+                        // se o tempo atual for maior ou igual ao tempo em que eles estarão livres.
+                        if (simulationTime >= linkOccupancyTime[linkId] && simulationTime >= bufferOccupancyTime[lp.currentLocation]) {
+                            lp.currentLocation = linkId;
+                            lp.currentStageStartTime = simulationTime;
+                            lp.expectedExitTime = simulationTime + transmissionTime + propDelay;
+                            
+                            // Atualiza o tempo de ocupação do link e do buffer de transmissão
+                            // O link e o buffer ficam ocupados pelo tempo de transmissão do pacote
+                            linkOccupancyTime[linkId] = simulationTime + transmissionTime;
+                            bufferOccupancyTime[lp.currentLocation] = simulationTime + transmissionTime;
                         }
-                    });
-        
-                    packetsToMove.forEach(packet => {
-                        // Remover do link e adicionar ao próximo buffer/destino
-                        linkState.inTransit = linkState.inTransit.filter(p => p.id !== packet.id);
-                        if (nextStep.startsWith('destinationB')) { // Chegou ao destino final
-                             // Pacote concluído
-                            packet.currentRouteIndex++;
-                            // Remover elemento visual
-                            if(packet.element) packet.element.remove();
-                        } else {
-                            if (bufferStates[nextStep].queue.length < bufferStates[nextStep].maxSize) {
-                                bufferStates[nextStep].queue.push(packet);
-                                packet.currentRouteIndex++;
-                                packet.arrivalTime = calculatedTime; // Tempo de chegada no novo buffer
-                            } else {
-                                // Buffer cheio, o pacote permanece no link (simples para este simulador)
-                                linkState.inTransit.push(packet); // Coloca de volta se não coube
-                            }
-                        }
-                    });
-                } else { // É um buffer
-                    const currentBufferState = bufferStates[currentStep];
-                    const nextBufferState = bufferStates[nextStep];
-        
-                    // Mover pacotes que terminaram a transmissão do buffer atual para o próximo
-                    // Consideramos que cada fragmento de 1KB leva 0.25s para ser transmitido pelo link
-                    // e que pacotes de N KB demoram N * 0.25s para saírem do buffer de transmissão.
-                    // O primeiro fragmento de um pacote completo inicia a transmissão quando o link está livre.
-                    // Os fragmentos subsequentes de um mesmo pacote se seguem em pipeline.
-        
-                    const packetsInCurrentBuffer = currentBufferState.queue;
-        
-                    if (packetsInCurrentBuffer.length > 0) {
-                        const packetToTransmit = packetsInCurrentBuffer[0];
-        
-                        let transmissionDuration = FRAGMENT_SIZE * TRANSMISSION_DELAY_PER_KB; // 0.25s para 1KB
-        
-                        // Para o primeiro fragmento de um novo pacote lógico
-                        // Ou o primeiro fragmento a sair de um buffer
-                        if (packetToTransmit.transmissionComplete === false) { // Se ainda não começou a transmitir
-                             // Calcula o tempo que este fragmento estará pronto para sair do buffer
-                            if (currentBufferState.lastDepartureTime === undefined || currentBufferState.lastDepartureTime <= calculatedTime) {
-                                packetToTransmit.departureTime = calculatedTime + transmissionDuration;
-                                packetToTransmit.transmissionComplete = true; // Marca que o tempo de transmissão foi computado
-                            } else {
-                                // Se o buffer ainda está ocupado transmitindo um fragmento anterior,
-                                // este fragmento espera sua vez.
-                                packetToTransmit.departureTime = currentBufferState.lastDepartureTime + transmissionDuration;
-                                packetToTransmit.transmissionComplete = true;
-                            }
-                            currentBufferState.lastDepartureTime = packetToTransmit.departureTime;
-                        }
-        
-                        if (calculatedTime >= packetToTransmit.departureTime) {
-                            // Tenta mover para o próximo estágio
-                            if (nextStep.startsWith('link')) {
-                                if (nextBufferState.inTransit.length === 0 || linkHasCapacity(nextStep, packetToTransmit)) {
-                                    // Remove do buffer atual
-                                    currentBufferState.queue.shift();
-                                    
-                                    // Adiciona ao link para propagação
-                                    packetToTransmit.arrivalTime = calculatedTime; // Início da propagação
-                                    nextBufferState.inTransit.push(packetToTransmit);
-                                    packetToTransmit.currentRouteIndex++;
-                                    packetToTransmit.transmissionComplete = false; // Reseta para próxima transmissão
-                                    currentBufferState.lastDepartureTime = packetToTransmit.departureTime; // Atualiza o tempo de saída do buffer
-                                }
-                            } else { // Próximo estágio é um buffer
-                                if (nextBufferState.queue.length < nextBufferState.maxSize) {
-                                    // Remove do buffer atual
-                                    currentBufferState.queue.shift();
-                                    
-                                    // Adiciona ao próximo buffer
-                                    nextBufferState.queue.push(packetToTransmit);
-                                    packetToTransmit.currentRouteIndex++;
-                                    packetToTransmit.arrivalTime = calculatedTime; // Tempo de chegada no novo buffer
-                                    packetToTransmit.transmissionComplete = false;
-                                    currentBufferState.lastDepartureTime = packetToTransmit.departureTime;
-                                }
-                            }
-                        }
+                    }
+                    // Cenário 2: Movendo de um link para um buffer de recepção (R)
+                    else if (lp.currentLocation.startsWith('link') && nextLocation.endsWith('R')) {
+                        // Verifica se o link já está livre (tempo de propagação + transmissão terminou)
+                        // A condição `simulationTime >= lp.expectedExitTime` já cuida disso.
+                        lp.currentLocation = nextLocation;
+                        lp.currentStageStartTime = simulationTime;
+                        lp.expectedExitTime = simulationTime; // Processamento no buffer é instantâneo
+                    }
+                    // Cenário 3: Movendo entre buffers dentro de um nó (R -> B -> T)
+                    else if (!lp.currentLocation.startsWith('link') && !nextLocation.startsWith('link')) {
+                        lp.currentLocation = nextLocation;
+                        lp.currentStageStartTime = simulationTime;
+                        lp.expectedExitTime = simulationTime; // Processamento no buffer é instantâneo
+                    }
+                    // Cenário 4: Injeção inicial do sourceB para sourceT (primeiro estágio)
+                    // Pacotes em sourceB são movidos para sourceT instantaneamente quando prontos.
+                    else if (lp.currentLocation === 'sourceB' && nextLocation === 'sourceT') {
+                        lp.currentLocation = nextLocation;
+                        lp.currentStageStartTime = simulationTime;
+                        lp.expectedExitTime = simulationTime; // Instantâneo
                     }
                 }
             }
-            renderPackets();
         
-            // Verificar se todos os pacotes chegaram ao destino final
-            const allPacketsDelivered = packets.every(p => p.currentRouteIndex >= route.length -1);
+            // Renderiza a visualização dos pacotes após todas as movimentações lógicas no tick atual
+            renderPacketsVisuals();
+        
+            // Verifica se todos os pacotes chegaram ao destino para parar a simulação
+            const allPacketsDelivered = logicalPackets.every(lp => lp.arrivalTime !== null);
             if (allPacketsDelivered) {
                 stopSimulation();
+            } else {
+                animationFrameId = requestAnimationFrame(updateSimulation);
             }
         }
         
-        // Verifica se o link tem capacidade para receber mais pacotes (simplificado, apenas um por link na fila)
-        function linkHasCapacity(linkName, packet) {
-            // Em uma simulação real, um link pode ter múltiplos pacotes em trânsito.
-            // Para este simulador, consideramos que o link transmite um fragmento por vez.
-            // A animação já permite múltiplos pacotes no link.
-            return true; 
-        }
-        
-        // Iniciar a simulação
+        /**
+         * Inicia a simulação.
+         * Reseta o estado, cria os pacotes e inicia o loop de animação.
+         */
         function startSimulation() {
             if (simulationRunning) return;
             
-            // Resetar e inicializar
+            // Resetar e inicializar variáveis de controle
             simulationRunning = true;
             simulationPaused = false;
-            calculatedTime = 0;
-            displayTime = 0;
-            timerDisplay.textContent = `TEMPO DECORRIDO: ${calculatedTime.toFixed(2)}`;
+            simulationTime = 0;
+            lastTimestamp = 0; // Resetar lastTimestamp para o novo ciclo de requestAnimationFrame
             
-            updateButtonStates();
+            updateButtonStates(); // Atualiza o estado dos botões da interface
             
-            // Criar pacotes com base nas configurações
-            createPackets();
+            createLogicalPackets(); // Cria os pacotes lógicos com base nas configurações atuais
             
-            // Iniciar o timer e a simulação de movimento
-            timerInterval = setInterval(simulateNetworkStep, 10); // Intervalo de 10ms para o cálculo do tempo
-            animationInterval = setInterval(renderPackets, animationSpeed); // Intervalo para renderizar a animação
+            animationFrameId = requestAnimationFrame(updateSimulation); // Inicia o loop de animação
         }
         
-        // Pausar a simulação
+        /**
+         * Pausa a simulação.
+         */
         function pauseSimulation() {
             if (!simulationRunning || simulationPaused) return;
             
             simulationPaused = true;
-            clearInterval(animationInterval); // Pausa a animação
             updateButtonStates();
         }
         
-        // Retomar a simulação
+        /**
+         * Retoma a simulação.
+         */
         function resumeSimulation() {
             if (!simulationRunning || !simulationPaused) return;
             
             simulationPaused = false;
-            animationInterval = setInterval(renderPackets, animationSpeed); // Retoma a animação
+            lastTimestamp = 0; // Resetar lastTimestamp para garantir cálculo correto do deltaTime ao retomar
+            animationFrameId = requestAnimationFrame(updateSimulation); // Retoma o loop de animação
             updateButtonStates();
         }
         
-        // Parar a simulação
+        /**
+         * Para a simulação.
+         * Limpa os intervalos e exibe o tempo final.
+         */
         function stopSimulation() {
             if (!simulationRunning) return;
             
-            clearInterval(timerInterval);
-            clearInterval(animationInterval);
+            cancelAnimationFrame(animationFrameId); // Para o loop de animação
             simulationRunning = false;
             simulationPaused = false;
             updateButtonStates();
-            
-            // Limpar todos os pacotes visuais ao parar
-            Object.values(buffers).forEach(buffer => {
-                const existingPackets = buffer.querySelectorAll('.packet');
-                existingPackets.forEach(p => p.remove());
-            });
-            packets = [];
-            activePackets = [];
-            initializeBufferStates(); // Resetar o estado dos buffers
-            timerDisplay.textContent = `TEMPO DECORRIDO: ${calculatedTime.toFixed(2)}`; // Exibe o tempo final
+            renderPacketsVisuals(); // Garante que a visualização final esteja correta
+        
+            // Calcula e exibe o tempo total da simulação
+            let finalTime = 0;
+            const deliveredLogicalPackets = logicalPackets.filter(lp => lp.arrivalTime !== null);
+            if (deliveredLogicalPackets.length > 0) {
+                // O tempo final é o tempo de chegada do último pacote lógico ao destino final (destinationB)
+                finalTime = Math.max(...deliveredLogicalPackets.map(lp => lp.arrivalTime));
+            }
+            timerDisplay.textContent = `TEMPO DECORRIDO: ${finalTime.toFixed(2)} (Simulação Concluída)`;
         }
         
-        // Atualizar estados dos botões
+        /**
+         * Atualiza o estado de habilitação/desabilitação dos botões e controles.
+         */
         function updateButtonStates() {
             startBtn.disabled = simulationRunning;
             pauseBtn.disabled = !simulationRunning || simulationPaused;
             resumeBtn.disabled = !simulationRunning || !simulationPaused;
             stopBtn.disabled = !simulationRunning;
             
-            // Desabilitar configurações durante a simulação
+            // Desabilita as configurações durante a simulação
             messageSize.disabled = simulationRunning;
             packetSize.disabled = simulationRunning;
             delayL1.disabled = simulationRunning;
@@ -740,29 +739,22 @@
             delayL3.disabled = simulationRunning;
         }
         
-        // Event listeners
+        // Event listeners para os botões de controle
         startBtn.addEventListener('click', startSimulation);
         pauseBtn.addEventListener('click', pauseSimulation);
         resumeBtn.addEventListener('click', resumeSimulation);
         stopBtn.addEventListener('click', stopSimulation);
         
+        // Listener para o controle de velocidade da simulação
         simulationSpeedControl.addEventListener('input', () => {
-            const speedFactor = parseInt(simulationSpeedControl.value);
-            // Ajusta a velocidade da animação: quanto maior o valor, mais rápido
-            // BASE_SPEED é o tempo base para cada "passo" visual
-            animationSpeed = BASE_SPEED * (11 - speedFactor) / 5; // Ajusta a velocidade inversamente ao slider
-            if (simulationRunning && !simulationPaused) {
-                clearInterval(animationInterval);
-                animationInterval = setInterval(renderPackets, animationSpeed);
-            }
+            const speedValue = parseInt(simulationSpeedControl.value);
+            // Ajusta o fator de velocidade da animação. Um valor maior no slider significa uma simulação mais rápida.
+            // O valor 5 é o "normal" (animationSpeedFactor = 1). Min 1 -> 0.2x, Max 10 -> 2x.
+            animationSpeedFactor = speedValue / 5; 
         });
         
-        // Inicialização
-        const BASE_SPEED = 250; // 0.25s para a animação
-        let animationSpeed = BASE_SPEED * (11 - parseInt(simulationSpeedControl.value)) / 5;
-        
+        // Inicialização: define o estado inicial dos botões ao carregar a página
         updateButtonStates();
-        initializeBufferStates(); // Garante que os buffers estão limpos no início
     </script>
 </body>
 </html>
