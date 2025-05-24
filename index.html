@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Fragmentação de Pacotes</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Simulador de Fragmentação de Pacotes</h1>
+
+        <div class="controls">
+            <label for="messageSize">Tamanho da Mensagem (kbits):</label>
+            <input type="number" id="messageSize" value="16" min="1">
+
+            <label for="packetSize">Tamanho do Pacote (kbits):</label>
+            <input type="number" id="packetSize" value="4" min="1">
+
+            <button id="startButton">Iniciar Simulação</button>
+            <button id="resetButton">Reiniciar</button>
+        </div>
+
+        <div class="simulation-area">
+            <div class="nodes">
+                <div class="node source-node" id="nodeA">
+                    <h3>A</h3>
+                    <p>Fonte</p>
+                    <div class="buffer-container">
+                        <div class="buffer" id="bufferA-B">B</div>
+                        <div class="buffer" id="bufferA-T">T</div>
+                    </div>
+                    <div class="queue" id="queueA"></div>
+                </div>
+
+                <div class="link" id="linkL1">L1</div>
+
+                <div class="node" id="nodeB">
+                    <h3>B</h3>
+                    <div class="buffer-container">
+                        <div class="buffer" id="bufferB-R">R</div>
+                        <div class="buffer" id="bufferB-B">B</div>
+                        <div class="buffer" id="bufferB-T">T</div>
+                    </div>
+                    <div class="queue" id="queueB-R"></div>
+                    <div class="queue" id="queueB-B"></div>
+                    <div class="queue" id="queueB-T"></div>
+                </div>
+
+                <div class="link" id="linkL2">L2</div>
+
+                <div class="node" id="nodeC">
+                    <h3>C</h3>
+                    <div class="buffer-container">
+                        <div class="buffer" id="bufferC-R">R</div>
+                        <div class="buffer" id="bufferC-B">B</div>
+                        <div class="buffer" id="bufferC-T">T</div>
+                    </div>
+                    <div class="queue" id="queueC-R"></div>
+                    <div class="queue" id="queueC-B"></div>
+                    <div class="queue" id="queueC-T"></div>
+                </div>
+
+                <div class="link" id="linkL3">L3</div>
+
+                <div class="node destination-node" id="nodeD">
+                    <h3>D</h3>
+                    <p>Destino</p>
+                    <div class="buffer-container">
+                        <div class="buffer" id="bufferD-R">R</div>
+                        <div class="buffer" id="bufferD-B">B</div>
+                    </div>
+                    <div class="queue" id="queueD-R"></div>
+                    <div class="queue" id="queueD-B"></div>
+                </div>
+            </div>
+
+            <div class="time-elapsed">
+                Tempo Transcorrido: <span id="simulationTime">0.00</span> s
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
